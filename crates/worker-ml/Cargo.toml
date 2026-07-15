@@ -14,8 +14,7 @@ chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
-# tokio: workspace gives macros + rt-multi-thread; add net/io for the OAuth callback listener.
-tokio = { workspace = true, features = ["net", "io-util"] }
+tokio.workspace = true
 uuid = { version = "1", features = ["v4"] }
 # native-tls -> SChannel on Windows / OpenSSL on Linux; no extra build tools.
 sqlx = { version = "0.8", default-features = false, features = [

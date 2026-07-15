@@ -1,20 +1,22 @@
 //! One-shot OAuth helper: obtain a MercadoLibre refresh token.
 //!
-//! Usage:
-//!   1. Register an app at https://developers.mercadolibre.com with redirect URI
-//!      exactly `http://localhost:8788/callback`.
-//!   2. ML_CLIENT_ID=... ML_CLIENT_SECRET=... cargo run -p worker-ml --bin auth
-//!   3. Open the printed URL, log in, authorize. The token prints here.
-//!   4. Put the refresh token in server/.env as ML_REFRESH_TOKEN.
+//! MercadoLibre requires an **https** redirect URI on a valid public domain
+//! (plain http, localhost and IPs are all rejected), so we don't run a local
+//! server. Register a harmless reserved domain and read the `code` from the
+//! browser's address bar after authorizing.
 //!
-//! Auth domain defaults to Peru (`auth.mercadolibre.com.pe`); override with
-//! ML_AUTH_DOMAIN for another country site.
+//! Setup at https://developers.mercadolibre.com:
+//!   * Redirect URI (exact): value of ML_REDIRECT_URI below
+//!     (default https://example.com/callback — RFC 2606 reserved, benign)
+//!   * OAuth flows: Authorization Code + Refresh Token
+//!   * Permission "Usuarios": read (enough for /users/me/bookmarks)
+//!
+//! Run:
+//!   ML_CLIENT_ID=... ML_CLIENT_SECRET=... cargo run -p worker-ml --bin auth
 
 use anyhow::{anyhow, Context, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use std::io::{self, Write};
 
-const REDIRECT_URI: &str = "http://localhost:8788/callback";
 const TOKEN_URL: &str = "https://api.mercadolibre.com/oauth/token";
 
 #[tokio::main]
@@ -23,16 +25,29 @@ async fn main() -> Result<()> {
     let client_secret = env("ML_CLIENT_SECRET")?;
     let auth_domain =
         std::env::var("ML_AUTH_DOMAIN").unwrap_or_else(|_| "auth.mercadolibre.com.pe".into());
+    // Must exactly match the redirect URI registered on the ML app.
+    let redirect_uri =
+        std::env::var("ML_REDIRECT_URI").unwrap_or_else(|_| "https://example.com/callback".into());
 
     let auth_url = format!(
-        "https://{auth_domain}/authorization?response_type=code&client_id={client_id}&redirect_uri={REDIRECT_URI}"
+        "https://{auth_domain}/authorization?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
     );
-    println!("\n1) Open this URL in your browser, log in and authorize:\n\n{auth_url}\n");
-    println!("2) Waiting for the redirect on {REDIRECT_URI} ...\n");
+    println!("\nUsing redirect_uri: {redirect_uri}");
+    println!("(register this EXACT value on the ML app)\n");
+    println!("1) Open this URL, log in and authorize:\n\n{auth_url}\n");
+    println!("2) The browser redirects to {redirect_uri}?code=...");
+    println!("   Copy the `code` from the URL bar (the page content doesn't matter).\n");
+    print!("Paste the code (or the whole redirected URL) here: ");
+    io::stdout().flush()?;
 
-    let code = wait_for_code().await?;
-    println!("Got authorization code, exchanging for tokens...\n");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let code = extract_code(input.trim());
+    if code.is_empty() {
+        return Err(anyhow!("no code provided"));
+    }
 
+    println!("\nExchanging code for tokens...");
     let http = reqwest::Client::new();
     let resp: serde_json::Value = http
         .post(TOKEN_URL)
@@ -42,48 +57,29 @@ async fn main() -> Result<()> {
             ("client_id", &client_id),
             ("client_secret", &client_secret),
             ("code", &code),
-            ("redirect_uri", REDIRECT_URI),
+            ("redirect_uri", &redirect_uri),
         ])
         .send()
         .await?
         .error_for_status()
-        .context("token exchange failed")?
+        .context("token exchange failed (check client id/secret and that the code is fresh)")?
         .json()
         .await?;
 
     let refresh = resp.get("refresh_token").and_then(|v| v.as_str()).unwrap_or("<none>");
     let access = resp.get("access_token").and_then(|v| v.as_str()).unwrap_or("<none>");
-    println!("access_token : {access}");
+    println!("\naccess_token : {access}");
     println!("refresh_token: {refresh}");
-    println!("\nSet ML_REFRESH_TOKEN={refresh} in server/.env");
+    println!("\nPut this in server/.env:  ML_REFRESH_TOKEN={refresh}");
     Ok(())
 }
 
-/// Accept one HTTP request on the callback port and pull `code` from the query.
-async fn wait_for_code() -> Result<String> {
-    let listener = TcpListener::bind("127.0.0.1:8788").await.context("binding :8788")?;
-    let (mut stream, _) = listener.accept().await?;
-
-    let mut buf = [0u8; 2048];
-    let n = stream.read(&mut buf).await?;
-    let req = String::from_utf8_lossy(&buf[..n]);
-    // First line: "GET /callback?code=XXX&state=... HTTP/1.1"
-    let target = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
-    let code = target
-        .split_once('?')
-        .and_then(|(_, q)| q.split('&').find_map(|kv| kv.strip_prefix("code=")))
-        .map(|c| c.to_string());
-
-    let body = "<html><body><h3>in_out: authorization received. You can close this tab.</h3></body></html>";
-    let resp = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(resp.as_bytes()).await;
-    let _ = stream.shutdown().await;
-
-    code.ok_or_else(|| anyhow!("no `code` in redirect query"))
+/// Accept either a bare code or a full `...?code=XXX&...` URL.
+fn extract_code(input: &str) -> String {
+    match input.find("code=") {
+        Some(i) => input[i + 5..].split(['&', ' ']).next().unwrap_or("").to_string(),
+        None => input.to_string(),
+    }
 }
 
 fn env(key: &str) -> Result<String> {
