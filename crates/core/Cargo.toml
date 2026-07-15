@@ -1,0 +1,10 @@
+[package]
+name = "in_out_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure domain logic: wishlist ranking, buy planning, transaction dedup."
+
+[dependencies]
+serde.workspace = true
+chrono.workspace = true

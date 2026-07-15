@@ -1,0 +1,16 @@
+[package]
+name = "ml-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin async client for the MercadoLibre REST API (OAuth, bookmarks, items, sellers)."
+
+[dependencies]
+in_out_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+tracing.workspace = true

@@ -1,0 +1,51 @@
+# Lightweight stack for agapornis (Hetzner): Postgres + n8n.
+#
+# The full Supabase self-hosted stack (auth, REST, realtime, studio) is layered
+# separately from the upstream repo — see server/README.md. This compose gives
+# you a Postgres to develop against and n8n for the email ingestion workflows.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: inout
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: inout
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inout"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=America/Lima
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_DATABASE=inout
+      - DB_POSTGRESDB_USER=inout
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:?set in .env}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:?set in .env}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:?set in .env}
+    ports:
+      - "5678:5678"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - n8ndata:/home/node/.n8n
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  n8ndata:
