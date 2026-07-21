@@ -13,8 +13,10 @@ services:
       POSTGRES_DB: inout
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # No host port: reachable only inside the compose network (postgres:5432).
+    # Avoids clashing with another Postgres on the host and keeps the DB private.
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U inout"]
       interval: 10s
@@ -35,8 +37,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "8090:8090"
+    # Internal only: n8n reaches it at http://ingest-api:8090.
+    expose:
+      - "8090"
     restart: unless-stopped
 
   n8n:
@@ -54,8 +57,10 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:?set in .env}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:?set in .env}
+    # Bind to localhost only; your reverse proxy forwards the public domain here.
+    # If 5678 is also taken on the host, change the left side (e.g. 5679:5678).
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678"
     depends_on:
       postgres:
         condition: service_healthy
