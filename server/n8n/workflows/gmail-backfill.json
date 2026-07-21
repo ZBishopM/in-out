@@ -1,0 +1,67 @@
+{
+  "name": "in-out Gmail backfill (run once)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [ 0, 0 ],
+      "id": "node-manual",
+      "name": "Run once"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 300,
+        "simple": false,
+        "filters": {
+          "q": "from:(service@intl.paypal.com OR notificaciones@notificacionesbcp.com.pe OR servicioalcliente@netinterbank.com.pe OR no-reply@operaciones.agora.pe OR bancadigital@scotiabank.com.pe) newer_than:1y"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [ 220, 0 ],
+      "id": "node-gmail-getall",
+      "name": "Gmail Get Many",
+      "credentials": { "gmailOAuth2": { "id": "SELECT_YOUR_GMAIL_CREDENTIAL", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "function addr(f){ if(!f) return ''; if(typeof f==='string') return f; if(f.text) return f.text; if(Array.isArray(f.value)&&f.value[0]) return f.value[0].address||f.value[0].name||''; return ''; }\nfunction str(x){ return typeof x==='string'?x:(x&&x.text)?x.text:''; }\nconst emails=[];\nfor(const item of $input.all()){\n  const j=item.json;\n  const sender=addr(j.From||j.from||(j.headers&&j.headers.from));\n  const subject=str(j.Subject||j.subject||(j.headers&&j.headers.subject));\n  let text=(typeof j.text==='string')?j.text:(j.textPlain||'');\n  if(!text&&j.html) text=String(j.html).replace(/<[^>]+>/g,' ');\n  if(!text) text=j.snippet||'';\n  const dateRaw=j.date||j.internalDate||j.Date;\n  let received_at;\n  if(dateRaw){ const n=Number(dateRaw); received_at=new Date(isNaN(n)?dateRaw:n).toISOString(); } else { received_at=new Date().toISOString(); }\n  emails.push({ gmail_msg_id:j.id||j.messageId, sender, subject, text, received_at });\n}\nreturn [{ json:{ emails } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [ 460, 0 ],
+      "id": "node-build-payload",
+      "name": "Build payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ingest-api:8090/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [ { "name": "Authorization", "value": "Bearer PASTE_YOUR_INGEST_TOKEN" } ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.emails }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 700, 0 ],
+      "id": "node-post-ingest",
+      "name": "POST ingest-api"
+    }
+  ],
+  "connections": {
+    "Run once": { "main": [ [ { "node": "Gmail Get Many", "type": "main", "index": 0 } ] ] },
+    "Gmail Get Many": { "main": [ [ { "node": "Build payload", "type": "main", "index": 0 } ] ] },
+    "Build payload": { "main": [ [ { "node": "POST ingest-api", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {}
+}
