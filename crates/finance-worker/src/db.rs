@@ -55,6 +55,73 @@ pub async fn load_unlinked(pool: &PgPool, user: Uuid) -> Result<Vec<Ev>> {
         .collect())
 }
 
+/// Find an account by (user, name), creating it if missing. Returns its id.
+pub async fn ensure_account(
+    pool: &PgPool,
+    user: Uuid,
+    name: &str,
+    kind: &str,
+    currency: &str,
+) -> Result<Uuid> {
+    if let Some(id) =
+        sqlx::query_scalar::<_, Uuid>("select id from accounts where user_id = $1 and name = $2")
+            .bind(user)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+    {
+        return Ok(id);
+    }
+    let id: Uuid = sqlx::query_scalar(
+        "insert into accounts (user_id, name, kind, currency) values ($1,$2,$3,$4) returning id",
+    )
+    .bind(user)
+    .bind(name)
+    .bind(kind)
+    .bind(currency)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Insert a raw event, deduped on (user, gmail_msg_id). Returns true if a new
+/// row was inserted (false if it already existed).
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_raw_event(
+    pool: &PgPool,
+    user: Uuid,
+    account: Option<Uuid>,
+    source: &str,
+    gmail_msg_id: &str,
+    received_at: DateTime<Utc>,
+    amount_cents: i64,
+    currency: &str,
+    direction: &str,
+    merchant: &str,
+) -> Result<bool> {
+    let res = sqlx::query(
+        r#"
+        insert into raw_events
+          (user_id, account_id, source, gmail_msg_id, received_at,
+           amount_cents, currency, direction, merchant_raw)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        on conflict (user_id, gmail_msg_id) do nothing
+        "#,
+    )
+    .bind(user)
+    .bind(account)
+    .bind(source)
+    .bind(gmail_msg_id)
+    .bind(received_at)
+    .bind(amount_cents)
+    .bind(currency)
+    .bind(direction)
+    .bind(merchant)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
 /// Insert a canonical transaction, returning its id.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_transaction(

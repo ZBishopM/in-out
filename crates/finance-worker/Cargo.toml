@@ -3,17 +3,21 @@ name = "finance-worker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Reconcile raw email events into deduplicated transactions + account balances."
+description = "Reconcile raw email events into deduplicated transactions + account balances, and ingest notification emails."
 
 [dependencies]
 in_out_core.workspace = true
+email-parse.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
-tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["net"] }
 dotenvy = "0.15"
 uuid = { version = "1", features = ["v4"] }
+axum = "0.7"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-native-tls",

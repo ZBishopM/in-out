@@ -14,10 +14,15 @@ docker compose up -d
 ## Apply the schema
 
 ```
-# schema (works on any Postgres)
+# schema (works on any Postgres) — apply in order
 docker compose exec -T postgres psql -U inout -d inout < supabase/migrations/0001_init.sql
+docker compose exec -T postgres psql -U inout -d inout < supabase/migrations/0003_relax_account_kind.sql
 # RLS — only on Supabase (needs auth.uid())
+# docker compose exec -T postgres psql -U inout -d inout < supabase/migrations/0002_rls.sql
 ```
+
+The `ingest-api` service (built from the repo `Dockerfile`) receives emails
+from n8n, parses them, and reconciles. See [n8n/README.md](n8n/README.md).
 
 ## Supabase self-hosted
 

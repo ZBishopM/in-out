@@ -9,19 +9,8 @@
 //!   DATABASE_URL    (required)
 //!   INOUT_USER_ID   (optional) uuid; defaults to the demo user.
 
-mod db;
-mod reconcile;
-mod seed;
-
 use anyhow::{Context, Result};
-use uuid::Uuid;
-
-fn user_id() -> Uuid {
-    std::env::var("INOUT_USER_ID")
-        .ok()
-        .and_then(|s| Uuid::parse_str(&s).ok())
-        .unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
-}
+use finance_worker::{db, reconcile, seed, user_id};
 
 #[tokio::main]
 async fn main() -> Result<()> {

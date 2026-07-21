@@ -56,9 +56,12 @@ pnpm --dir apps/ui dev   # http://localhost:5173
   you don't own, and anti-bot blocks scraping from datacenter IPs. Price fetch is
   **deferred** to a future client-side (Tauri webview) approach. See the
   2026-07 update in [PLAN.md](PLAN.md).
-- **F2 (finances)** — in progress. Reconciliation engine done: `finance-worker`
-  clusters raw events into deduplicated transactions + account balances
-  (verified against Postgres; Uber receipt + card charge collapse to one
-  transaction). **Pending:** email ingestion via n8n (Gmail) to fill
-  `raw_events`, and real parsers per source (PayPal/BCP/Yape/Plin).
+- **F2 (finances)** — engine + ingestion built and verified against Postgres:
+  - `email-parse` parses real notification emails (PayPal, BCP débito, Interbank
+    card + app, Scotiabank/Plin) into normalized fields.
+  - `finance-worker` reconciles raw events into deduplicated transactions +
+    account balances, and exposes an `ingest-api` HTTP service (n8n POSTs Gmail
+    messages → parse → `raw_events` → reconcile; deduped by message id).
+  - **Pending (needs the server):** deploy the stack on agapornis and wire the
+    n8n Gmail workflow (see [server/n8n/README.md](server/n8n/README.md)).
 - **Next: F3 (dashboard).**

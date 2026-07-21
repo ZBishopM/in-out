@@ -30,3 +30,4 @@ regex = "1"
 # local crates
 in_out_core = { path = "crates/core" }
 ml-client = { path = "crates/ml-client" }
+email-parse = { path = "crates/email-parse" }
