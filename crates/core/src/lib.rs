@@ -10,5 +10,5 @@ pub mod budget;
 pub mod finance;
 
 pub use budget::{buy_plan, Affordable, BuyPlan};
-pub use finance::{is_duplicate, RawEvent, ReconcileConfig};
+pub use finance::{cluster, is_duplicate, RawEvent, ReconcileConfig};
 pub use wishlist::{rank, Filters, ItemSnapshot, Medal};

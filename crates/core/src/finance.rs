@@ -42,6 +42,43 @@ impl Default for ReconcileConfig {
     }
 }
 
+/// Group events into clusters where every member is a duplicate of at least one
+/// other member (transitively). Each returned inner vec holds indices into
+/// `events`; singletons are their own cluster. Order within a cluster is
+/// ascending by index. This is the reconciliation step: one cluster = one
+/// canonical transaction.
+pub fn cluster(events: &[RawEvent], cfg: &ReconcileConfig) -> Vec<Vec<usize>> {
+    let n = events.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]]; // path halving
+            x = parent[x];
+        }
+        x
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if is_duplicate(&events[i], &events[j], cfg) {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                if ri != rj {
+                    parent[ri] = rj;
+                }
+            }
+        }
+    }
+
+    // Bucket indices by their representative root, preserving ascending order.
+    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    for i in 0..n {
+        let root = find(&mut parent, i);
+        groups.entry(root).or_default().push(i);
+    }
+    groups.into_values().collect()
+}
+
 /// True if `a` and `b` most likely describe the same real-world spend.
 pub fn is_duplicate(a: &RawEvent, b: &RawEvent, cfg: &ReconcileConfig) -> bool {
     if !a.currency.eq_ignore_ascii_case(&b.currency) {
@@ -130,5 +167,21 @@ mod tests {
         let a = ev(2550, "Uber", 9);
         let b = ev(2550, "Uber", 20);
         assert!(!is_duplicate(&a, &b, &cfg));
+    }
+
+    #[test]
+    fn cluster_merges_receipt_and_charge() {
+        let events = vec![
+            ev(2550, "Uber Trip", 9),                  // 0: receipt
+            ev(2550, "UBER *TRIP HELP.UBER.COM", 10),  // 1: card charge -> dup of 0
+            ev(1500, "Yape a Juan", 12),               // 2: standalone
+            ev(9900, "Netflix", 20),                   // 3: standalone
+        ];
+        let clusters = cluster(&events, &ReconcileConfig::default());
+        assert_eq!(clusters.len(), 3);
+        // The two-member cluster is the Uber pair.
+        let pair = clusters.iter().find(|c| c.len() == 2).expect("a 2-member cluster");
+        assert_eq!(pair, &vec![0, 1]);
+        assert_eq!(clusters.iter().filter(|c| c.len() == 1).count(), 2);
     }
 }

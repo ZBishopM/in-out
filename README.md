@@ -56,5 +56,9 @@ pnpm --dir apps/ui dev   # http://localhost:5173
   you don't own, and anti-bot blocks scraping from datacenter IPs. Price fetch is
   **deferred** to a future client-side (Tauri webview) approach. See the
   2026-07 update in [PLAN.md](PLAN.md).
-- **Next: F2 (finances)** — n8n email ingestion → dedup/reconciliation →
-  accounts, then **F3 (dashboard)**.
+- **F2 (finances)** — in progress. Reconciliation engine done: `finance-worker`
+  clusters raw events into deduplicated transactions + account balances
+  (verified against Postgres; Uber receipt + card charge collapse to one
+  transaction). **Pending:** email ingestion via n8n (Gmail) to fill
+  `raw_events`, and real parsers per source (PayPal/BCP/Yape/Plin).
+- **Next: F3 (dashboard).**

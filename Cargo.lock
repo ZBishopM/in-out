@@ -1073,6 +1073,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "finance-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dotenvy",
+ "in_out_core",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

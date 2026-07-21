@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/ml-client",
     "crates/worker-ml",
+    "crates/finance-worker",
     "crates/desktop",
 ]
 
