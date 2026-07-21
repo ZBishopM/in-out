@@ -1,0 +1,55 @@
+{
+  "name": "in-out Gmail ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [ { "mode": "everyMinute" } ] },
+        "simple": false,
+        "filters": {
+          "q": "from:(service@intl.paypal.com OR notificaciones@notificacionesbcp.com.pe OR servicioalcliente@netinterbank.com.pe OR no-reply@operaciones.agora.pe OR bancadigital@scotiabank.com.pe)"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [ 0, 0 ],
+      "id": "node-gmail-trigger",
+      "name": "Gmail Trigger",
+      "credentials": { "gmailOAuth2": { "id": "SELECT_YOUR_GMAIL_CREDENTIAL", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const emails = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const from = j.From || j.from || (j.headers && j.headers.from) || '';\n  const subject = j.Subject || j.subject || (j.headers && j.headers.subject) || '';\n  let text = j.text || j.textPlain || '';\n  if (!text && j.html) text = String(j.html).replace(/<[^>]+>/g, ' ');\n  if (!text) text = j.snippet || '';\n  const dateRaw = j.date || j.internalDate || j.Date;\n  let received_at;\n  if (dateRaw) {\n    const n = Number(dateRaw);\n    received_at = new Date(isNaN(n) ? dateRaw : n).toISOString();\n  } else {\n    received_at = new Date().toISOString();\n  }\n  emails.push({ gmail_msg_id: j.id || j.messageId, sender: from, subject, text, received_at });\n}\nreturn [{ json: { emails } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [ 240, 0 ],
+      "id": "node-build-payload",
+      "name": "Build payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ingest-api:8090/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [ { "name": "Authorization", "value": "Bearer PASTE_YOUR_INGEST_TOKEN" } ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.emails }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 480, 0 ],
+      "id": "node-post-ingest",
+      "name": "POST ingest-api"
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": { "main": [ [ { "node": "Build payload", "type": "main", "index": 0 } ] ] },
+    "Build payload": { "main": [ [ { "node": "POST ingest-api", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {}
+}
