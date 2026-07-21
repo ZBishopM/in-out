@@ -38,9 +38,10 @@ services:
       postgres:
         condition: service_healthy
     # n8n reaches it at http://ingest-api:8090 (docker net). Also published on
-    # localhost so the host nginx can proxy the dashboard subdomain to it.
+    # localhost:8095 (8090 is taken by pocketbase) so the host nginx can proxy
+    # the dashboard subdomain to it.
     ports:
-      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:8095:8090"
     restart: unless-stopped
 
   n8n:
