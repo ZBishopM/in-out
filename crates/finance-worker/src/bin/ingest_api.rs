@@ -13,12 +13,14 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use finance_worker::ingest::{ingest, EmailIn, IngestReport};
-use finance_worker::{db, user_id};
+use finance_worker::{db, read, user_id};
+use serde::Deserialize;
 
 struct AppState {
     pool: sqlx::PgPool,
@@ -42,7 +44,13 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState { pool, token });
 
     let app = Router::new()
+        .route("/", get(dashboard))
         .route("/health", get(|| async { "ok" }))
+        .route("/api/summary", get(api_summary))
+        .route("/api/daily", get(api_daily))
+        .route("/api/hourly", get(api_hourly))
+        .route("/api/accounts", get(api_accounts))
+        .route("/api/transactions", get(api_transactions))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
 
@@ -69,4 +77,53 @@ async fn ingest_handler(
         .await
         .map(Json)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+// ---- dashboard + read API (public route is gated by the reverse proxy) ----
+
+type ApiErr = (StatusCode, String);
+fn err500<E: std::fmt::Display>(e: E) -> ApiErr {
+    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+async fn dashboard() -> Html<&'static str> {
+    Html(include_str!("../dashboard.html"))
+}
+
+#[derive(Deserialize)]
+struct DaysQ {
+    #[serde(default = "default_days")]
+    days: i32,
+}
+fn default_days() -> i32 {
+    30
+}
+
+#[derive(Deserialize)]
+struct LimitQ {
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+fn default_limit() -> i64 {
+    50
+}
+
+async fn api_summary(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::SummaryRow>>, ApiErr> {
+    read::summary(&st.pool, user_id()).await.map(Json).map_err(err500)
+}
+
+async fn api_daily(State(st): State<Arc<AppState>>, Query(q): Query<DaysQ>) -> Result<Json<Vec<read::DayRow>>, ApiErr> {
+    read::daily(&st.pool, user_id(), q.days).await.map(Json).map_err(err500)
+}
+
+async fn api_hourly(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::HourRow>>, ApiErr> {
+    read::hourly(&st.pool, user_id()).await.map(Json).map_err(err500)
+}
+
+async fn api_accounts(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
+    read::accounts(&st.pool, user_id()).await.map(Json).map_err(err500)
+}
+
+async fn api_transactions(State(st): State<Arc<AppState>>, Query(q): Query<LimitQ>) -> Result<Json<Vec<read::TxRow>>, ApiErr> {
+    read::transactions(&st.pool, user_id(), q.limit.clamp(1, 500)).await.map(Json).map_err(err500)
 }

@@ -3,6 +3,7 @@
 
 pub mod db;
 pub mod ingest;
+pub mod read;
 pub mod reconcile;
 pub mod seed;
 

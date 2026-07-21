@@ -37,9 +37,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # Internal only: n8n reaches it at http://ingest-api:8090.
-    expose:
-      - "8090"
+    # n8n reaches it at http://ingest-api:8090 (docker net). Also published on
+    # localhost so the host nginx can proxy the dashboard subdomain to it.
+    ports:
+      - "127.0.0.1:8090:8090"
     restart: unless-stopped
 
   n8n:

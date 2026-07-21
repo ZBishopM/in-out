@@ -64,4 +64,7 @@ pnpm --dir apps/ui dev   # http://localhost:5173
     messages → parse → `raw_events` → reconcile; deduped by message id).
   - **Pending (needs the server):** deploy the stack on agapornis and wire the
     n8n Gmail workflow (see [server/n8n/README.md](server/n8n/README.md)).
-- **Next: F3 (dashboard).**
+- **F3 (dashboard)** — `ingest-api` also serves a web dashboard at `/` plus a
+  read API (`/api/summary|daily|hourly|accounts|transactions`). Spend by day/hour,
+  account balances, recent transactions. Verified locally. Deploy: a reverse-proxy
+  subdomain (basic auth) → the service. The Tauri app will consume the same API.
