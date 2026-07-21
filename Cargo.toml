@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/ml-client",
     "crates/worker-ml",
+    "crates/email-parse",
     "crates/finance-worker",
     "crates/desktop",
 ]
@@ -24,6 +25,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+regex = "1"
 
 # local crates
 in_out_core = { path = "crates/core" }
