@@ -15,6 +15,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
+dotenvy = "0.15"
 uuid = { version = "1", features = ["v4"] }
 # native-tls -> SChannel on Windows / OpenSSL on Linux; no extra build tools.
 sqlx = { version = "0.8", default-features = false, features = [

@@ -21,6 +21,7 @@ const TOKEN_URL: &str = "https://api.mercadolibre.com/oauth/token";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    worker_ml::load_env();
     let client_id = env("ML_CLIENT_ID")?;
     let client_secret = env("ML_CLIENT_SECRET")?;
     let auth_domain =
@@ -49,7 +50,7 @@ async fn main() -> Result<()> {
 
     println!("\nExchanging code for tokens...");
     let http = reqwest::Client::new();
-    let resp: serde_json::Value = http
+    let http_resp = http
         .post(TOKEN_URL)
         .header("accept", "application/json")
         .form(&[
@@ -60,17 +61,29 @@ async fn main() -> Result<()> {
             ("redirect_uri", &redirect_uri),
         ])
         .send()
-        .await?
-        .error_for_status()
-        .context("token exchange failed (check client id/secret and that the code is fresh)")?
-        .json()
         .await?;
+    let status = http_resp.status();
+    let text = http_resp.text().await?;
+    if !status.is_success() {
+        eprintln!("\nToken exchange failed ({status}). MercadoLibre says:\n{text}");
+        eprintln!("\nMost likely the code was already used or expired — codes last only a few\nminutes. Re-run and paste the code immediately after authorizing.");
+        return Err(anyhow!("token exchange failed"));
+    }
+    let resp: serde_json::Value = serde_json::from_str(&text).context("parsing token response")?;
 
-    let refresh = resp.get("refresh_token").and_then(|v| v.as_str()).unwrap_or("<none>");
+    let refresh = resp.get("refresh_token").and_then(|v| v.as_str());
     let access = resp.get("access_token").and_then(|v| v.as_str()).unwrap_or("<none>");
     println!("\naccess_token : {access}");
-    println!("refresh_token: {refresh}");
-    println!("\nPut this in server/.env:  ML_REFRESH_TOKEN={refresh}");
+    match refresh {
+        Some(rt) => {
+            let prefix = &rt[..rt.len().min(8)];
+            match worker_ml::persist_refresh_token(rt) {
+                Ok(()) => println!("refresh_token ({prefix}...) saved to server/.env (ML_REFRESH_TOKEN)."),
+                Err(e) => println!("refresh_token: {rt}\n(could not write server/.env: {e} — add it manually)"),
+            }
+        }
+        None => println!("No refresh_token in response — is the Refresh Token flow enabled on the app?"),
+    }
     Ok(())
 }
 

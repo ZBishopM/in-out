@@ -37,12 +37,20 @@ pub struct OAuthCreds {
 #[derive(Debug, Deserialize)]
 struct TokenResp {
     access_token: String,
-    #[allow(dead_code)]
     #[serde(default)]
     refresh_token: Option<String>,
-    #[allow(dead_code)]
     #[serde(default)]
     expires_in: Option<i64>,
+}
+
+/// Tokens returned by a refresh. MercadoLibre **rotates** the refresh token on
+/// every use, so `refresh_token` here is a NEW value the caller MUST persist —
+/// the one just used is now invalid.
+#[derive(Debug, Clone)]
+pub struct Tokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_in: Option<i64>,
 }
 
 pub struct MlClient {
@@ -56,8 +64,10 @@ impl MlClient {
         Self { http: reqwest::Client::new(), access_token: access_token.into() }
     }
 
-    /// Exchange a refresh token for a fresh access token, then build a client.
-    pub async fn from_refresh(creds: &OAuthCreds) -> Result<Self> {
+    /// Exchange a refresh token for a fresh access token. Returns the client and
+    /// the rotated [`Tokens`] — persist `tokens.refresh_token` or the next
+    /// refresh will fail with `invalid_grant`.
+    pub async fn from_refresh(creds: &OAuthCreds) -> Result<(Self, Tokens)> {
         let http = reqwest::Client::new();
         let resp: TokenResp = http
             .post(AUTH)
@@ -72,7 +82,13 @@ impl MlClient {
             .error_for_status()?
             .json()
             .await?;
-        Ok(Self { http, access_token: resp.access_token })
+        let client = Self { http, access_token: resp.access_token.clone() };
+        let tokens = Tokens {
+            access_token: resp.access_token,
+            refresh_token: resp.refresh_token,
+            expires_in: resp.expires_in,
+        };
+        Ok((client, tokens))
     }
 
     async fn get(&self, path: &str) -> Result<serde_json::Value> {

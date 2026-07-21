@@ -85,15 +85,28 @@ config(user_id, data jsonb)
 
 ---
 
-## Módulo 1 — MercadoLibre / compras (PRIMERO)
+## Módulo 1 — MercadoLibre / compras (POSPUESTO)
 
-### Integración API
-1. Registrar app en developers.mercadolibre.com → `client_id` / `client_secret`, redirect URI.
-2. OAuth2 authorization-code flow (una vez) → guardar `refresh_token` en Supabase (cifrado).
-3. `worker-ml` (cron, p.ej. cada 2 h):
-   - `GET /users/me/bookmarks` → IDs de items → tabla `wishlist_items`.
-   - Por item: `GET /items/{id}` → precio, `seller_id`.
-   - Por vendedor: `GET /users/{seller_id}` → `power_seller_status`, `seller_reputation.transactions.completed`.
+> **Actualización 2026-07 (hallazgos F1, validados en vivo):**
+> - ✅ OAuth (authorization-code + refresh, con rotación de token) funciona.
+> - ✅ `GET /users/me/bookmarks` funciona → devuelve la wishlist real (item_ids + fecha).
+> - ❌ `GET /items/{id}` devuelve **403 `access_denied`** para items ajenos (política ML 2024-25), aun con scope `read`. No hay scope que lo habilite.
+> - ❌ Scraping HTTP anónimo → muro anti-bot (`suspicious-traffic-frontend`).
+> - ❌ Navegador headless sin sesión → rebota a login.
+> - ⇒ **Precios de items ajenos requieren navegador real + IP residencial + sesión ML.** El worker en Hetzner (IP datacenter) no sirve para precios.
+>
+> **Decisión:** posponer el scraping de precios. Cuando se retome, el candidato es
+> scraping desde el **webview de la app Tauri** (IP residencial + sesión del usuario),
+> no desde el servidor. La parte de bookmarks (item_ids) sí queda funcional.
+> Orden nuevo: **F2 finanzas → F3 dashboard → precios después.**
+
+### Integración API (parcial: solo bookmarks utilizable hoy)
+1. Registrar app en developers.mercadolibre.com → `client_id` / `client_secret`, redirect URI **https** (localhost/http rechazados).
+2. OAuth2 authorization-code flow (una vez) → guardar `refresh_token` (ML **rota** el refresh token en cada uso → persistir el nuevo).
+3. `worker-ml`:
+   - `GET /users/me/bookmarks` → IDs de items → tabla `wishlist_items`. ✅
+   - Por item: `GET /items/{id}` → **bloqueado (403)**. Pendiente vía webview.
+   - Por vendedor: `GET /users/{seller_id}` → reputación. (No probado por el bloqueo de items.)
    - Escribe `item_snapshots` con `passes_filter` calculado.
 
 ### Filtros (configurables)

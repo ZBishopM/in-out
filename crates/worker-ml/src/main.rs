@@ -17,6 +17,7 @@ use worker_ml::{db, mock, user_id};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    worker_ml::load_env();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -65,7 +66,14 @@ async fn fetch_from_ml() -> Result<Vec<PricedItem>> {
         client_secret: env("ML_CLIENT_SECRET")?,
         refresh_token: env("ML_REFRESH_TOKEN")?,
     };
-    let client = MlClient::from_refresh(&creds).await.context("ML token refresh")?;
+    let (client, tokens) = MlClient::from_refresh(&creds).await.context("ML token refresh")?;
+    // ML rotates the refresh token on every use — save the new one immediately.
+    if let Some(new_rt) = tokens.refresh_token {
+        match worker_ml::persist_refresh_token(&new_rt) {
+            Ok(()) => tracing::info!("rotated refresh token persisted"),
+            Err(e) => tracing::warn!(error = %e, "failed to persist rotated refresh token"),
+        }
+    }
     let ids = client.bookmarks().await.context("fetching bookmarks")?;
 
     let mut out = Vec::new();

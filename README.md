@@ -50,5 +50,11 @@ pnpm --dir apps/ui dev   # http://localhost:5173
 
 ## Status
 
-Phase **F0 (scaffold)** done. Next: **F1 — MercadoLibre** (OAuth, worker
-persistence into Supabase, wired UI). See [PLAN.md](PLAN.md#roadmap-por-fases).
+- **F0 (scaffold)** — done.
+- **F1 (MercadoLibre)** — OAuth + wishlist (`/users/me/bookmarks`) working and
+  persisting to Postgres. Item **prices are blocked**: ML returns 403 for items
+  you don't own, and anti-bot blocks scraping from datacenter IPs. Price fetch is
+  **deferred** to a future client-side (Tauri webview) approach. See the
+  2026-07 update in [PLAN.md](PLAN.md).
+- **Next: F2 (finances)** — n8n email ingestion → dedup/reconciliation →
+  accounts, then **F3 (dashboard)**.
