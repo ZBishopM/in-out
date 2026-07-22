@@ -7,8 +7,10 @@
 
 pub mod wishlist;
 pub mod budget;
+pub mod category;
 pub mod finance;
 
 pub use budget::{buy_plan, Affordable, BuyPlan};
+pub use category::categorize;
 pub use finance::{cluster, is_duplicate, RawEvent, ReconcileConfig};
 pub use wishlist::{rank, Filters, ItemSnapshot, Medal};

@@ -132,12 +132,13 @@ pub async fn insert_transaction(
     currency: &str,
     direction: &str,
     merchant: &str,
+    category: &str,
 ) -> Result<Uuid> {
     let id: Uuid = sqlx::query_scalar(
         r#"
         insert into transactions
-          (user_id, occurred_at, amount_cents, currency, direction, merchant, reconciled)
-        values ($1, $2, $3, $4, $5, $6, true)
+          (user_id, occurred_at, amount_cents, currency, direction, merchant, category, reconciled)
+        values ($1, $2, $3, $4, $5, $6, $7, true)
         returning id
         "#,
     )
@@ -147,9 +148,31 @@ pub async fn insert_transaction(
     .bind(currency)
     .bind(direction)
     .bind(merchant)
+    .bind(category)
     .fetch_one(pool)
     .await?;
     Ok(id)
+}
+
+/// Recompute `category` for every transaction from its merchant + direction.
+/// Returns the number updated. Used to backfill after category rules change.
+pub async fn recategorize_all(pool: &PgPool, user: Uuid) -> Result<u64> {
+    let rows: Vec<(Uuid, Option<String>, String)> =
+        sqlx::query_as("select id, merchant, direction from transactions where user_id = $1")
+            .bind(user)
+            .fetch_all(pool)
+            .await?;
+    let mut n = 0u64;
+    for (id, merchant, direction) in rows {
+        let cat = in_out_core::categorize(merchant.as_deref().unwrap_or(""), &direction);
+        sqlx::query("update transactions set category = $1 where id = $2")
+            .bind(cat)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 pub async fn insert_link(pool: &PgPool, tx: Uuid, raw_event: Uuid, role: &str) -> Result<()> {

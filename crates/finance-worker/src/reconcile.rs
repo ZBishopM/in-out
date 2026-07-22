@@ -1,7 +1,7 @@
 //! Turn clusters of raw events into canonical transactions + links.
 
 use anyhow::Result;
-use in_out_core::{cluster, RawEvent, ReconcileConfig};
+use in_out_core::{categorize, cluster, RawEvent, ReconcileConfig};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -36,6 +36,7 @@ pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
         let name_src = receipt.or(settlement).expect("cluster is non-empty");
         let occurred = members.iter().map(|m| m.core.occurred_at).min().unwrap();
 
+        let category = categorize(&name_src.core.merchant, &canon.direction);
         let tx = db::insert_transaction(
             pool,
             user,
@@ -44,6 +45,7 @@ pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
             &canon.core.currency,
             &canon.direction,
             &name_src.core.merchant,
+            category,
         )
         .await?;
 

@@ -28,6 +28,12 @@ pub struct HourRow {
 }
 
 #[derive(Serialize)]
+pub struct CategoryRow {
+    pub category: String,
+    pub out_cents: i64,
+}
+
+#[derive(Serialize)]
 pub struct AccountRow {
     pub name: String,
     pub kind: String,
@@ -89,6 +95,23 @@ pub async fn hourly(pool: &PgPool, user: Uuid) -> Result<Vec<HourRow>> {
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|(hour, out_cents)| HourRow { hour, out_cents }).collect())
+}
+
+pub async fn by_category(pool: &PgPool, user: Uuid) -> Result<Vec<CategoryRow>> {
+    let rows: Vec<(Option<String>, i64)> = sqlx::query_as(
+        r#"select coalesce(category, 'Otros') as category,
+                  coalesce(sum(amount_cents),0)::bigint as out_cents
+           from transactions
+           where user_id = $1 and direction = 'out' and currency = 'PEN'
+           group by category order by out_cents desc"#,
+    )
+    .bind(user)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(category, out_cents)| CategoryRow { category: category.unwrap_or_else(|| "Otros".into()), out_cents })
+        .collect())
 }
 
 pub async fn accounts(pool: &PgPool, user: Uuid) -> Result<Vec<AccountRow>> {

@@ -27,6 +27,13 @@ async fn main() -> Result<()> {
     let user = user_id();
     let pool = db::connect(&db_url).await.context("connecting to Postgres")?;
 
+    // Backfill categories for existing transactions, then exit.
+    if std::env::args().any(|a| a == "--recategorize") {
+        let n = db::recategorize_all(&pool, user).await?;
+        println!("recategorized {n} transactions");
+        return Ok(());
+    }
+
     if std::env::args().any(|a| a == "--seed") {
         seed::seed(&pool, user).await?;
         tracing::info!("seeded synthetic finance data");

@@ -35,6 +35,11 @@
   th { color:var(--muted); font-weight:600; font-size:.72rem; text-transform:uppercase; }
   td.amt { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
   .amt.out { color:var(--out); } .amt.in { color:var(--in); }
+  .catrow { display:grid; grid-template-columns:120px 1fr auto; align-items:center; gap:.6rem; padding:.35rem 0; }
+  .catrow .cn { font-size:.85rem; }
+  .catrow .track { background:var(--panel2); border-radius:6px; height:14px; overflow:hidden; }
+  .catrow .fill { height:100%; background:linear-gradient(90deg,var(--accent),#6366f1); border-radius:6px; }
+  .catrow .ca { font-variant-numeric:tabular-nums; font-weight:600; font-size:.85rem; }
   .acct { display:flex; justify-content:space-between; padding:.45rem 0; border-bottom:1px solid var(--line); }
   .acct .n { font-weight:600; } .acct .kind { color:var(--muted); font-size:.75rem; }
   .neg { color:var(--out); } .pos { color:var(--in); }
@@ -58,6 +63,11 @@
     <h2>Gasto por hora (S/)</h2>
     <div class="bars" id="hourbars"></div>
     <div class="xlabels" id="hourlabels"></div>
+  </section>
+
+  <section>
+    <h2>Gasto por categoría (S/)</h2>
+    <div id="cats"></div>
   </section>
 
   <section>
@@ -88,9 +98,9 @@ function bars(elBars, elLabels, data, valueFn, labelFn, tipFn) {
 
 async function main() {
   try {
-    const [summary, daily, hourly, accounts, txs] = await Promise.all([
+    const [summary, daily, hourly, cats, accounts, txs] = await Promise.all([
       get('/api/summary'), get('/api/daily?days=30'), get('/api/hourly'),
-      get('/api/accounts'), get('/api/transactions?limit=25'),
+      get('/api/by_category'), get('/api/accounts'), get('/api/transactions?limit=25'),
     ]);
 
     const find = (c,d) => (summary.find(s=>s.currency===c&&s.direction===d)||{}).total_cents||0;
@@ -111,6 +121,12 @@ async function main() {
     const hours = Array.from({length:24},(_,i)=>({hour:i,out_cents:hmap[i]||0}));
     bars(document.getElementById('hourbars'), document.getElementById('hourlabels'),
       hours, h=>h.out_cents, h=>h.hour%3===0?String(h.hour):'', h=>`${h.hour}:00 — ${money(h.out_cents)}`);
+
+    const cmax = Math.max(1, ...cats.map(c => c.out_cents));
+    document.getElementById('cats').innerHTML = cats.map(c =>
+      `<div class="catrow"><span class="cn">${c.category}</span>
+       <span class="track"><span class="fill" style="width:${Math.round(c.out_cents/cmax*100)}%"></span></span>
+       <span class="ca">${money(c.out_cents)}</span></div>`).join('') || '<span class="kind">sin datos</span>';
 
     document.getElementById('accounts').innerHTML = accounts.map(a =>
       `<div class="acct"><div><div class="n">${a.name}</div><div class="kind">${a.kind}</div></div>

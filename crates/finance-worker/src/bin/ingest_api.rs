@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/summary", get(api_summary))
         .route("/api/daily", get(api_daily))
         .route("/api/hourly", get(api_hourly))
+        .route("/api/by_category", get(api_by_category))
         .route("/api/accounts", get(api_accounts))
         .route("/api/transactions", get(api_transactions))
         .route("/ingest", post(ingest_handler))
@@ -118,6 +119,10 @@ async fn api_daily(State(st): State<Arc<AppState>>, Query(q): Query<DaysQ>) -> R
 
 async fn api_hourly(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::HourRow>>, ApiErr> {
     read::hourly(&st.pool, user_id()).await.map(Json).map_err(err500)
+}
+
+async fn api_by_category(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::CategoryRow>>, ApiErr> {
+    read::by_category(&st.pool, user_id()).await.map(Json).map_err(err500)
 }
 
 async fn api_accounts(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
