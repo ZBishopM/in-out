@@ -6,10 +6,11 @@
   "build": {
     "frontendDist": "../../apps/ui/build",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm --dir ../../apps/ui dev",
+    "beforeDevCommand": "",
     "beforeBuildCommand": "pnpm --dir ../../apps/ui build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "in_out",

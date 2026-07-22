@@ -1988,6 +1988,7 @@ name = "in_out-desktop"
 version = "0.1.0"
 dependencies = [
  "in_out_core",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",

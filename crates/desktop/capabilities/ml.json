@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ml-scrape",
+  "description": "Let the MercadoLibre scraping webview emit events back to the app.",
+  "windows": ["ml"],
+  "remote": {
+    "urls": ["https://*.mercadolibre.com.pe", "https://*.mercadolibre.com"]
+  },
+  "permissions": ["core:event:default"]
+}
