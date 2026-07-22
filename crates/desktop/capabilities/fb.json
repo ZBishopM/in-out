@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "fb-scrape",
+  "description": "Let the Facebook Marketplace scraping webview emit events back to the app.",
+  "windows": ["fb"],
+  "remote": {
+    "urls": ["https://*.facebook.com", "https://facebook.com"]
+  },
+  "permissions": ["core:event:default"]
+}

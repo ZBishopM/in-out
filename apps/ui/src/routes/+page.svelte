@@ -4,39 +4,78 @@
   const ls = (k: string, d = '') => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
   const lset = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
 
+  type Src = 'ml' | 'fb';
   const MOCK: ItemSnapshot[] = [
-    { item_id: 'MPE1', title: 'Teclado mecánico', price_cents: 12000, currency: 'PEN', seller_status: 'gold', seller_sales: 1200, verified: true }
+    { item_id: 'MPE1', title: '(sin wishlist aún — actualiza ML o FB)', price_cents: 0, currency: 'PEN', seller_status: 'gold', seller_sales: 1200, verified: true }
   ];
-  function loadSaved(): ItemSnapshot[] {
-    try { const a = JSON.parse(ls('inout-wishlist', '')); return Array.isArray(a) && a.length ? a : MOCK; }
-    catch { return MOCK; }
+  function loadSaved(src: Src): ItemSnapshot[] {
+    const legacy = src === 'ml' ? ls('inout-wishlist') : '';
+    try { const a = JSON.parse(ls('inout-wishlist-' + src) || legacy || '[]'); return Array.isArray(a) ? a : []; }
+    catch { return []; }
   }
 
-  // Persisted wishlist (scraped prices survive restarts); replaced by 'ml-items'.
-  const saved = loadSaved();
-  let items = $state<ItemSnapshot[]>(saved);
-  let mlStatus = $state(saved === MOCK ? '' : `${saved.length} items guardados.`);
+  // Per-source scraped items, merged into `items` for ranking / buy plan.
+  let srcItems = $state<Record<Src, ItemSnapshot[]>>({ ml: loadSaved('ml'), fb: loadSaved('fb') });
+  const merged = $derived([...srcItems.ml, ...srcItems.fb]);
+  const items = $derived(merged.length ? merged : MOCK);
 
-  async function connectML() {
+  // Saved page URL per source → refresh hidden (no visible window).
+  let favUrls = $state<Record<Src, string>>({
+    ml: ls('inout-fav-ml') || ls('inout-fav-url'),
+    fb: ls('inout-fav-fb')
+  });
+  let mlStatus = $state('');
+  let fbStatus = $state('');
+  const setStatus = (src: Src, m: string) => { if (src === 'ml') mlStatus = m; else fbStatus = m; };
+
+  async function refresh(src: Src) {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('scrape_ml_favorites');
-    mlStatus = 'Ventana ML abierta — ve a tus Favoritos; los precios llegan solos.';
+    const fav = favUrls[src];
+    if (fav) {
+      setStatus(src, 'Actualizando en segundo plano…');
+      await invoke('open_scraper', { source: src, url: fav, hidden: true });
+    } else {
+      setStatus(src, src === 'ml' ? 'Inicia sesión en ML y abre Favoritos (1ª vez).' : 'Inicia sesión en FB y abre Marketplace (1ª vez).');
+      await invoke('open_scraper', { source: src, url: null, hidden: false });
+    }
   }
 
-  // Listen for scraped items from the ML webview; persist them.
+  // Listen for scraped items + login-needed for both sources.
   $effect(() => {
     if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
-    let un: (() => void) | undefined;
-    import('@tauri-apps/api/event').then(({ listen }) =>
-      listen<ItemSnapshot[]>('ml-items', (e) => {
-        if (Array.isArray(e.payload) && e.payload.length) {
-          items = e.payload;
-          lset('inout-wishlist', JSON.stringify(e.payload));
-          mlStatus = `Recibidos ${e.payload.length} items de MercadoLibre.`;
-        }
-      }).then((f) => (un = f))
-    );
-    return () => un?.();
+    const uns: Array<() => void> = [];
+    import('@tauri-apps/api/event').then(async ({ listen }) => {
+      for (const src of ['ml', 'fb'] as Src[]) {
+        uns.push(
+          await listen<{ url: string; items: ItemSnapshot[] }>(`${src}-items`, (e) => {
+            const p = e.payload;
+            if (p && Array.isArray(p.items) && p.items.length) {
+              srcItems = { ...srcItems, [src]: p.items };
+              lset('inout-wishlist-' + src, JSON.stringify(p.items));
+              if (p.url) { favUrls = { ...favUrls, [src]: p.url }; lset('inout-fav-' + src, p.url); }
+              setStatus(src, `${p.items.length} items actualizados.`);
+            }
+          })
+        );
+        uns.push(
+          await listen<string>(`${src}-needs-login`, async () => {
+            setStatus(src, 'Necesitas iniciar sesión — abriendo…');
+            const { invoke } = await import('@tauri-apps/api/core');
+            await invoke('open_scraper', { source: src, url: null, hidden: false });
+          })
+        );
+      }
+    });
+    return () => uns.forEach((u) => u());
+  });
+
+  // Auto-refresh (hidden) once on open for any source with a saved URL.
+  let autoRan = false;
+  $effect(() => {
+    if (autoRan || typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+    autoRan = true;
+    if (favUrls.ml) refresh('ml');
+    if (favUrls.fb) refresh('fb');
   });
 
   // Real balance from the dashboard API (settings persisted locally).
@@ -104,9 +143,11 @@
   <p class="src">Fuente: {tauriPlan ? 'Rust (Tauri)' : 'preview navegador'}</p>
 
   <div class="ml">
-    <button onclick={connectML}>Actualizar precios (MercadoLibre)</button>
-    {#if mlStatus}<span class="ml-status">{mlStatus}</span>{/if}
+    <button onclick={() => refresh('ml')}>Actualizar MercadoLibre</button>
+    <button class="fb" onclick={() => refresh('fb')}>Actualizar Facebook</button>
   </div>
+  {#if mlStatus}<p class="ml-status">ML: {mlStatus}</p>{/if}
+  {#if fbStatus}<p class="ml-status">FB: {fbStatus}</p>{/if}
 
   <details class="saldo">
     <summary>Usar mi saldo real (dashboard)</summary>
@@ -181,10 +222,14 @@
   .src { margin: 0 0 .75rem; font-size: .8rem; color: #8a8a94; }
   .ml { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
   .ml button { background: #ffe600; color: #2d3277; border: none; border-radius: 8px; padding: .55rem .9rem; font-weight: 700; cursor: pointer; }
+  .ml button.fb { background: #1877f2; color: #fff; }
   .ml button:hover { filter: brightness(.95); }
   .ml-status { font-size: .78rem; color: #a9a9b3; }
   .saldo { margin-bottom: 1.25rem; font-size: .82rem; color: #a9a9b3; }
-  .saldo summary { cursor: pointer; }
+  .saldo summary { cursor: pointer; display: inline-block; color: #e7e7ea; background: #26262e; border: 1px solid #3a3a44; border-radius: 8px; padding: .5rem .8rem; font-weight: 600; list-style: none; }
+  .saldo summary::-webkit-details-marker { display: none; }
+  .saldo summary::before { content: '⚙ '; }
+  .saldo[open] summary { margin-bottom: .3rem; }
   .saldo-form { display: flex; flex-wrap: wrap; gap: .5rem; margin: .6rem 0; }
   .saldo-form input { background: #26262e; color: #e7e7ea; border: 1px solid #3a3a44; border-radius: 6px; padding: .4rem .5rem; }
   .saldo-form button { background: #3b82f6; color: #fff; border: none; border-radius: 6px; padding: .4rem .8rem; cursor: pointer; font-weight: 600; }
