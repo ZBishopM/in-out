@@ -17,7 +17,7 @@
         "limit": 300,
         "simple": false,
         "filters": {
-          "q": "from:(service@intl.paypal.com OR notificaciones@notificacionesbcp.com.pe OR servicioalcliente@netinterbank.com.pe OR no-reply@operaciones.agora.pe OR bancadigital@scotiabank.com.pe) newer_than:1y"
+          "q": "from:(service@intl.paypal.com OR notificaciones@notificacionesbcp.com.pe OR servicioalcliente@netinterbank.com.pe OR no-reply@servicioalcliente.sip.pe OR no-reply@operaciones.agora.pe OR bancadigital@scotiabank.com.pe) newer_than:1y"
         },
         "options": {}
       },

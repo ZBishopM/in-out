@@ -8,8 +8,9 @@ and must be ignored.
 | Source | Sender | Anchor(s) | Dir | Account |
 |--------|--------|-----------|-----|---------|
 | PayPal | `service@intl.paypal.com` | `<payer> le envió $ <amount> USD` | in | paypal (USD) |
-| BCP débito | `notificaciones@notificacionesbcp.com.pe` | `Realizaste un consumo de S/ <amount> ... en <merchant>` | out | bcp_debito |
+| BCP débito/crédito | `notificaciones@notificacionesbcp.com.pe` | `Realizaste un consumo de S/ <amount> con tu Tarjeta de (Débito\|Crédito) BCP en <merchant>` | out | bcp_debito / bcp_credito |
 | Interbank card (Amex) | `servicioalcliente@netinterbank.com.pe` | `Comercio: <m>  Monto: S/. <amount>` | out | interbank_amex |
+| Sip card | `no-reply@servicioalcliente.sip.pe` | `Establecimiento: <m>  Monto: S/. <amount>` | out | sip |
 | Interbank app op | `no-reply@operaciones.agora.pe` | `Monto S/ <amount> ... Enviado a <name>` / `Origen <acct>` | out | interbank |
 | Scotiabank (Plin in) | `bancadigital@scotiabank.com.pe` | `Recepción Transferencia Plin ... Monto recibido: S/ <amount>` | in | scotiabank |
 

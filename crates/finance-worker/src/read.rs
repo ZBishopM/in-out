@@ -61,12 +61,13 @@ pub async fn summary(pool: &PgPool, user: Uuid) -> Result<Vec<SummaryRow>> {
 
 pub async fn daily(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<DayRow>> {
     let rows: Vec<(NaiveDate, i64, i64)> = sqlx::query_as(
-        r#"select occurred_at::date as day,
+        r#"select (occurred_at at time zone 'America/Lima')::date as day,
                   coalesce(sum(amount_cents) filter (where direction='out'),0)::bigint as out_cents,
                   coalesce(sum(amount_cents) filter (where direction='in'),0)::bigint as in_cents
            from transactions
            where user_id = $1 and currency = 'PEN'
-             and occurred_at::date >= current_date - $2::int
+             and (occurred_at at time zone 'America/Lima')::date
+                 >= (now() at time zone 'America/Lima')::date - $2::int
            group by day order by day"#,
     )
     .bind(user)
@@ -78,7 +79,7 @@ pub async fn daily(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<DayRow>> 
 
 pub async fn hourly(pool: &PgPool, user: Uuid) -> Result<Vec<HourRow>> {
     let rows: Vec<(i32, i64)> = sqlx::query_as(
-        r#"select extract(hour from occurred_at)::int as hour,
+        r#"select extract(hour from (occurred_at at time zone 'America/Lima'))::int as hour,
                   coalesce(sum(amount_cents),0)::bigint as out_cents
            from transactions
            where user_id = $1 and direction = 'out' and currency = 'PEN'

@@ -32,9 +32,11 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
     if s.contains("paypal.com") {
         parse_paypal(text)
     } else if s.contains("notificacionesbcp.com.pe") {
-        parse_bcp_debito(text)
+        parse_bcp(text)
     } else if s.contains("netinterbank.com.pe") {
         parse_interbank_card(text)
+    } else if s.contains("sip.pe") {
+        parse_sip(text)
     } else if s.contains("operaciones.agora.pe") {
         parse_interbank_op(text)
     } else if s.contains("scotiabank.com.pe") {
@@ -72,21 +74,40 @@ fn parse_paypal(text: &str) -> Option<Parsed> {
     })
 }
 
-/// BCP débito card consumption: "Realizaste un consumo de S/ 10.90 con tu
-/// Tarjeta de Débito BCP en PLIN-GUSTAVO YNJANTE."
-fn parse_bcp_debito(text: &str) -> Option<Parsed> {
+/// BCP card consumption (débito or crédito): "Realizaste un consumo de S/ 10.90
+/// con tu Tarjeta de Crédito BCP en DLC*UBER RIDES." The card type routes to a
+/// different account.
+fn parse_bcp(text: &str) -> Option<Parsed> {
     let re = Regex::new(
-        r"(?i)consumo de\s*S/\s*([\d.,]+)\s*con tu Tarjeta de D[ée]bito BCP en\s*(.+?)[\.\n]",
+        r"(?i)consumo de\s*S/\s*([\d.,]+)\s*con tu Tarjeta de (Cr[ée]dito|D[ée]bito) BCP en\s*(.+?)[\.\n]",
     )
     .ok()?;
     let c = re.captures(text)?;
+    let is_credito = c[2].to_lowercase().starts_with("cr");
     Some(Parsed {
         source: "bcp".into(),
-        account_hint: "bcp_debito".into(),
+        account_hint: if is_credito { "bcp_credito" } else { "bcp_debito" }.into(),
         amount_cents: amount_to_cents(&c[1])?,
         currency: "PEN".into(),
         direction: "out".into(),
-        merchant: clean(&c[2]),
+        merchant: clean(&c[3]),
+    })
+}
+
+/// Sip credit card: "Establecimiento: PUKU PUKU EL POLO  Monto: S/. 29.00".
+fn parse_sip(text: &str) -> Option<Parsed> {
+    let amount = Regex::new(r"(?i)Monto:\s*S/\.?\s*([\d.,]+)").ok()?.captures(text)?[1].to_string();
+    let merchant = Regex::new(r"(?i)Establecimiento:\s*(.+?)\s+Monto:").ok()?
+        .captures(text)
+        .map(|c| clean(&c[1]))
+        .unwrap_or_else(|| "Consumo Sip".into());
+    Some(Parsed {
+        source: "sip".into(),
+        account_hint: "sip".into(),
+        amount_cents: amount_to_cents(&amount)?,
+        currency: "PEN".into(),
+        direction: "out".into(),
+        merchant,
     })
 }
 
@@ -172,6 +193,34 @@ mod tests {
         assert_eq!(p.amount_cents, 1090);
         assert_eq!(p.merchant, "PLIN-GUSTAVO YNJANTE");
         assert_eq!(p.account_hint, "bcp_debito");
+    }
+
+    #[test]
+    fn bcp_credito_uber() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Realizaste un consumo con tu Tarjeta de Crédito BCP",
+            "Hola Carlos Enrique, Realizaste un consumo de S/ 11.50 con tu Tarjeta de Crédito BCP en DLC*UBER RIDES. Por tu seguridad",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 1150);
+        assert_eq!(p.merchant, "DLC*UBER RIDES");
+        assert_eq!(p.account_hint, "bcp_credito");
+    }
+
+    #[test]
+    fn sip_consumo() {
+        let p = parse(
+            "no-reply@servicioalcliente.sip.pe",
+            "Sip, realizaste un consumo con tu Tarjeta de Crédito Sip",
+            "Hola, CARLOS. Has realizado una transacción con tu Tarjeta de Crédito Sip. Tarjeta Titular: XXXXXXXXXXXX2514 Establecimiento: PUKU PUKU EL POLO Monto: S/. 29.00 Fecha de operación: 19/07/2026",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 2900);
+        assert_eq!(p.merchant, "PUKU PUKU EL POLO");
+        assert_eq!(p.source, "sip");
     }
 
     #[test]

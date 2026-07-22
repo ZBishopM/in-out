@@ -35,8 +35,10 @@ fn account_meta(hint: &str) -> (&'static str, &'static str, &'static str) {
     match hint {
         "paypal" => ("PayPal", "paypal", "USD"),
         "bcp_debito" => ("BCP Débito", "bcp", "PEN"),
+        "bcp_credito" => ("BCP Crédito", "card", "PEN"),
         "interbank_amex" => ("Interbank Amex", "card", "PEN"),
         "interbank" => ("Interbank", "interbank", "PEN"),
+        "sip" => ("Sip", "card", "PEN"),
         "scotiabank" => ("Scotiabank", "scotiabank", "PEN"),
         _ => ("Otros", "other", "PEN"),
     }
