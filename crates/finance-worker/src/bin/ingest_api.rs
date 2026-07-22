@@ -51,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/hourly", get(api_hourly))
         .route("/api/by_category", get(api_by_category))
         .route("/api/accounts", get(api_accounts))
+        .route("/api/accounts/balance", post(api_set_balance))
         .route("/api/transactions", get(api_transactions))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
@@ -127,6 +128,21 @@ async fn api_by_category(State(st): State<Arc<AppState>>) -> Result<Json<Vec<rea
 
 async fn api_accounts(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
     read::accounts(&st.pool, user_id()).await.map(Json).map_err(err500)
+}
+
+#[derive(Deserialize)]
+struct SetBalanceReq {
+    account_id: uuid::Uuid,
+    current_cents: i64,
+}
+
+async fn api_set_balance(
+    State(st): State<Arc<AppState>>,
+    Json(b): Json<SetBalanceReq>,
+) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
+    let user = user_id();
+    db::set_account_balance(&st.pool, user, b.account_id, b.current_cents).await.map_err(err500)?;
+    read::accounts(&st.pool, user).await.map(Json).map_err(err500)
 }
 
 async fn api_transactions(State(st): State<Arc<AppState>>, Query(q): Query<LimitQ>) -> Result<Json<Vec<read::TxRow>>, ApiErr> {

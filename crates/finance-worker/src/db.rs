@@ -193,7 +193,7 @@ pub async fn insert_link(pool: &PgPool, tx: Uuid, raw_event: Uuid, role: &str) -
 pub async fn recompute_balances(pool: &PgPool, user: Uuid) -> Result<()> {
     sqlx::query(
         r#"
-        update accounts a set balance_cents = coalesce((
+        update accounts a set balance_cents = a.opening_balance_cents + coalesce((
             select sum(x.signed) from (
                 select distinct t.id,
                     case when t.direction = 'in' then t.amount_cents else -t.amount_cents end as signed
@@ -209,6 +209,39 @@ pub async fn recompute_balances(pool: &PgPool, user: Uuid) -> Result<()> {
     .bind(user)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Net (signed) of the transactions attributed to `account`.
+async fn account_net(pool: &PgPool, account: Uuid) -> Result<i64> {
+    let net: Option<i64> = sqlx::query_scalar(
+        r#"select sum(x.signed)::bigint from (
+             select distinct t.id,
+               case when t.direction = 'in' then t.amount_cents else -t.amount_cents end as signed
+             from transactions t
+             join transaction_links l on l.transaction_id = t.id
+             join raw_events r on r.id = l.raw_event_id
+             where r.account_id = $1
+           ) x"#,
+    )
+    .bind(account)
+    .fetch_one(pool)
+    .await?;
+    Ok(net.unwrap_or(0))
+}
+
+/// Set an account's *current* balance: back-compute the opening balance so that
+/// opening + net = current, then refresh all balances.
+pub async fn set_account_balance(pool: &PgPool, user: Uuid, account: Uuid, current_cents: i64) -> Result<()> {
+    let net = account_net(pool, account).await?;
+    let opening = current_cents - net;
+    sqlx::query("update accounts set opening_balance_cents = $1 where id = $2 and user_id = $3")
+        .bind(opening)
+        .bind(account)
+        .bind(user)
+        .execute(pool)
+        .await?;
+    recompute_balances(pool, user).await?;
     Ok(())
 }
 

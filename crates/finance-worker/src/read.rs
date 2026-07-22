@@ -35,10 +35,12 @@ pub struct CategoryRow {
 
 #[derive(Serialize)]
 pub struct AccountRow {
+    pub id: Uuid,
     pub name: String,
     pub kind: String,
     pub currency: String,
     pub balance_cents: i64,
+    pub opening_balance_cents: i64,
 }
 
 #[derive(Serialize)]
@@ -115,16 +117,23 @@ pub async fn by_category(pool: &PgPool, user: Uuid) -> Result<Vec<CategoryRow>> 
 }
 
 pub async fn accounts(pool: &PgPool, user: Uuid) -> Result<Vec<AccountRow>> {
-    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
-        r#"select name, kind, currency, balance_cents from accounts
-           where user_id = $1 order by name"#,
+    let rows: Vec<(Uuid, String, String, String, i64, i64)> = sqlx::query_as(
+        r#"select id, name, kind, currency, balance_cents, opening_balance_cents
+           from accounts where user_id = $1 order by name"#,
     )
     .bind(user)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(name, kind, currency, balance_cents)| AccountRow { name, kind, currency, balance_cents })
+        .map(|(id, name, kind, currency, balance_cents, opening_balance_cents)| AccountRow {
+            id,
+            name,
+            kind,
+            currency,
+            balance_cents,
+            opening_balance_cents,
+        })
         .collect())
 }
 
