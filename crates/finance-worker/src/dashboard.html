@@ -69,6 +69,33 @@
   .neg { color:var(--out); } .pos { color:var(--in); }
   .err { color:var(--out); }
   button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  /* collapsible sections */
+  .sec-head { display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
+  .sec-head h2 { margin:0; }
+  .chev { color:var(--muted); font-size:1.15rem; line-height:1; transition:transform .3s ease; }
+  section.collapsed .chev { transform:rotate(-90deg); }
+  .sec-body { display:grid; grid-template-rows:1fr; transition:grid-template-rows .35s cubic-bezier(.22,.61,.36,1); margin-top:1rem; }
+  section.collapsed .sec-body { grid-template-rows:0fr; margin-top:0; }
+  .sec-inner { overflow:hidden; min-height:0; }
+
+  /* entrance cascade */
+  @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+  h1, .sub, .tiles, section { animation:rise .55s cubic-bezier(.22,.61,.36,1) both; }
+  h1 { animation-delay:.02s } .sub { animation-delay:.06s } .tiles { animation-delay:.10s }
+  section:nth-of-type(1){animation-delay:.16s} section:nth-of-type(2){animation-delay:.22s}
+  section:nth-of-type(3){animation-delay:.28s} section:nth-of-type(4){animation-delay:.34s}
+  section:nth-of-type(5){animation-delay:.40s} section:nth-of-type(6){animation-delay:.46s}
+
+  /* growth transitions */
+  .bar > i { transition: height .7s cubic-bezier(.22,.61,.36,1); }
+  .catrow .fill { transition: width .7s cubic-bezier(.22,.61,.36,1); }
+  .tile { transition: transform .2s ease, box-shadow .2s ease; }
+  .tile:hover { transform: translateY(-2px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation:none !important; transition:none !important; }
+  }
 </style>
 </head>
 <body>
@@ -208,11 +235,47 @@ function wireAddAccount() {
 
 function bars(elBars, elLabels, data, valueFn, labelFn, tipFn) {
   const max = Math.max(1, ...data.map(valueFn));
-  elBars.innerHTML = data.map(d => {
-    const h = Math.round(valueFn(d)/max*100);
-    return `<div class="bar" data-label="${tipFn(d)}"><i style="height:${h}%"></i></div>`;
-  }).join('');
+  elBars.innerHTML = data.map(d => `<div class="bar" data-label="${tipFn(d)}"><i style="height:0%"></i></div>`).join('');
   elLabels.innerHTML = data.map(d => `<span>${labelFn(d)}</span>`).join('');
+  const grow = () => elBars.querySelectorAll('.bar > i').forEach((el, i) => {
+    el.style.height = Math.round(valueFn(data[i]) / max * 100) + '%';
+  });
+  requestAnimationFrame(() => requestAnimationFrame(grow));
+}
+
+function countUp(el, target, cur) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = money(target, cur); return; }
+  const dur = 750, t0 = performance.now();
+  (function step(now) {
+    const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = money(Math.round(target * e), cur);
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+// Turn each <section> into a collapsible with a chevron; remember state.
+function makeCollapsible() {
+  const state = JSON.parse(localStorage.getItem('inout-collapsed') || '{}');
+  document.querySelectorAll('section').forEach((sec, i) => {
+    if (sec.querySelector('.sec-head')) return; // already wrapped
+    const h2 = sec.querySelector('h2');
+    const key = h2 ? h2.textContent.trim() : 'sec' + i;
+    const head = document.createElement('div'); head.className = 'sec-head';
+    const chev = document.createElement('span'); chev.className = 'chev'; chev.textContent = '⌄';
+    sec.insertBefore(head, sec.firstChild);
+    if (h2) head.appendChild(h2);
+    head.appendChild(chev);
+    const body = document.createElement('div'); body.className = 'sec-body';
+    const inner = document.createElement('div'); inner.className = 'sec-inner';
+    while (head.nextSibling) inner.appendChild(head.nextSibling);
+    body.appendChild(inner); sec.appendChild(body);
+    if (state[key]) sec.classList.add('collapsed');
+    head.onclick = () => {
+      sec.classList.toggle('collapsed');
+      state[key] = sec.classList.contains('collapsed');
+      localStorage.setItem('inout-collapsed', JSON.stringify(state));
+    };
+  });
 }
 
 async function main() {
@@ -223,14 +286,16 @@ async function main() {
     ]);
 
     const find = (c,d) => (summary.find(s=>s.currency===c&&s.direction===d)||{}).total_cents||0;
+    const net = find('PEN','in') - find('PEN','out');
     const tiles = [
-      { k:'Egresos (S/)', v: money(find('PEN','out')), cls:'out' },
-      { k:'Ingresos (S/)', v: money(find('PEN','in')), cls:'in' },
-      { k:'PayPal (USD)', v: money(find('USD','in'),'USD'), cls:'in' },
-      { k:'Neto (S/)', v: money(find('PEN','in')-find('PEN','out')), cls: find('PEN','in')-find('PEN','out')>=0?'in':'out' },
+      { k:'Egresos (S/)', cents: find('PEN','out'), cur:'PEN', cls:'out' },
+      { k:'Ingresos (S/)', cents: find('PEN','in'), cur:'PEN', cls:'in' },
+      { k:'PayPal (USD)', cents: find('USD','in'), cur:'USD', cls:'in' },
+      { k:'Neto (S/)', cents: net, cur:'PEN', cls: net>=0?'in':'out' },
     ];
-    document.getElementById('tiles').innerHTML = tiles.map(t =>
-      `<div class="tile"><div class="k">${t.k}</div><div class="v ${t.cls}">${t.v}</div></div>`).join('');
+    document.getElementById('tiles').innerHTML = tiles.map((t,i) =>
+      `<div class="tile"><div class="k">${t.k}</div><div class="v ${t.cls}" id="tile-${i}">${money(0,t.cur)}</div></div>`).join('');
+    tiles.forEach((t,i) => countUp(document.getElementById('tile-'+i), t.cents, t.cur));
 
     bars(document.getElementById('daybars'), document.getElementById('daylabels'),
       daily, d=>d.out_cents, d=>d.day.slice(5), d=>`${d.day}: ${money(d.out_cents)}`);
@@ -242,10 +307,13 @@ async function main() {
       hours, h=>h.out_cents, h=>h.hour%3===0?String(h.hour):'', h=>`${h.hour}:00 — ${money(h.out_cents)}`);
 
     const cmax = Math.max(1, ...cats.map(c => c.out_cents));
-    document.getElementById('cats').innerHTML = cats.map(c =>
+    const catsEl = document.getElementById('cats');
+    catsEl.innerHTML = cats.map(c =>
       `<div class="catrow"><span class="cn">${c.category}</span>
-       <span class="track"><span class="fill" style="width:${Math.round(c.out_cents/cmax*100)}%"></span></span>
+       <span class="track"><span class="fill" style="width:0%"></span></span>
        <span class="ca">${money(c.out_cents)}</span></div>`).join('') || '<span class="kind">sin datos</span>';
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      catsEl.querySelectorAll('.catrow .fill').forEach((el, i) => el.style.width = Math.round(cats[i].out_cents / cmax * 100) + '%')));
 
     renderAccounts(accounts);
     wireAddAccount();
@@ -258,6 +326,7 @@ async function main() {
     }).join('');
 
     document.getElementById('sub').textContent = `${txs.length ? 'actualizado' : 'sin datos'} · ${new Date().toLocaleString('es-PE')}`;
+    makeCollapsible();
   } catch (e) {
     document.getElementById('sub').innerHTML = `<span class="err">error: ${e.message}</span>`;
   }

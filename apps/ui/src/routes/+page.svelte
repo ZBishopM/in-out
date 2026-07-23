@@ -352,7 +352,16 @@
   li:not(.affordable) .price { color: var(--muted-txt); }
   .empty { display: block; text-align: center; color: var(--muted-txt); box-shadow: none; opacity: 1; }
 
+  /* entrance cascade — the panel assembles itself on open */
+  @keyframes rise { from { opacity: 0; transform: translateY(13px); } to { opacity: 1; transform: none; } }
+  .head, .ml, .ml-status, .saldo, .controls, .bar, .hint, .list {
+    animation: rise .5s cubic-bezier(.22, .61, .36, 1) both;
+  }
+  .head { animation-delay: .02s } .ml { animation-delay: .08s }
+  .saldo { animation-delay: .13s } .controls { animation-delay: .18s }
+  .bar { animation-delay: .24s } .hint { animation-delay: .28s } .list { animation-delay: .32s }
+
   @media (prefers-reduced-motion: reduce) {
-    .fill, li, .ml button { transition: none; }
+    *, ::before, ::after { animation: none !important; transition: none !important; }
   }
 </style>
