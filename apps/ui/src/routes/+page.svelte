@@ -105,9 +105,12 @@
 
   let budgetSoles = $state(Number(ls('inout-budget', '300')) || 300);
   $effect(() => { lset('inout-budget', String(budgetSoles)); });
-  let minMedal = $state<Medal | ''>('gold');
-  let minSales = $state(100);
-  let requireVerified = $state(false);
+  // Permissive by default: scraped items may lack seller reputation, so don't
+  // hide them. Tighten these to require a MercadoLíder medal / sales / verified.
+  let minMedal = $state<Medal | ''>((ls('inout-minmedal') as Medal) || '');
+  let minSales = $state(Number(ls('inout-minsales', '0')) || 0);
+  let requireVerified = $state(ls('inout-verified') === '1');
+  $effect(() => { lset('inout-minmedal', minMedal); lset('inout-minsales', String(minSales)); lset('inout-verified', requireVerified ? '1' : '0'); });
 
   const filters = $derived<Filters>({
     min_medal: minMedal || null,

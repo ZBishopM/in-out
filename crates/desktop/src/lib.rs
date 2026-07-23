@@ -28,11 +28,19 @@ window.__inoutExtract = function () {
     const title = card.querySelector('h2, .poly-component__title, .ui-search-item__title');
     const digits = el.textContent.replace(/[^0-9]/g, '');
     if (!digits) return;
+    // Real seller signals read from the card text (defensive against DOM churn).
+    const txt = (card.textContent || '').toLowerCase();
+    let medal = null;
+    if (txt.indexOf('platinum') >= 0 || txt.indexOf('platino') >= 0) medal = 'platinum';
+    else if (txt.indexOf('mercadolíder') >= 0 || txt.indexOf('mercadolider') >= 0 || txt.indexOf('mercado líder') >= 0) medal = 'gold';
+    const verified = txt.indexOf('tienda oficial') >= 0;
+    const soldm = txt.match(/([\d.]+)\s*vendidos/);
+    const sales = soldm ? parseInt(soldm[1].replace(/\./g, ''), 10) || 0 : 0;
     out.push({
       item_id: (link && link.href.match(/(ML[A-Z]-?\d+)/) || [,''])[1] || (link ? link.href : ''),
       title: title ? title.textContent.trim() : '(sin título)',
       price_cents: parseInt(digits, 10) * 100,
-      currency: 'PEN', seller_status: 'gold', seller_sales: 100, verified: true,
+      currency: 'PEN', seller_status: medal, seller_sales: sales, verified: verified,
       permalink: link ? link.href : ''
     });
   });
@@ -68,7 +76,7 @@ window.__inoutExtract = function () {
       item_id: 'FB' + idm[1],
       title: (lines[0] || 'Marketplace').slice(0, 80),
       price_cents: Math.round(num * 100),
-      currency: 'PEN', seller_status: 'gold', seller_sales: 100, verified: true,
+      currency: 'PEN', seller_status: null, seller_sales: 0, verified: false,
       permalink: a.href.split('?')[0]
     });
   });
@@ -89,7 +97,8 @@ const COMMON_INIT: &str = r#"
     const src = window.__inoutSource;
     const items = window.__inoutExtract();
     const total = items.reduce(function (s, i) { return s + i.price_cents; }, 0);
-    toast('in_out [' + src + ']: ' + items.length + ' items · S/ ' + (total / 100).toFixed(2));
+    const medaled = items.filter(function (i) { return i.seller_status; }).length;
+    toast('in_out [' + src + ']: ' + items.length + ' items · S/ ' + (total / 100).toFixed(2) + ' · ' + medaled + ' con medalla');
     try { window.__TAURI__.event.emit(src + '-items', { url: location.href, items: items }); } catch (e) { toast('in_out error: ' + e); }
   }
   window.addEventListener('load', function () {
