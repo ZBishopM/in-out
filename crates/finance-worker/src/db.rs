@@ -230,6 +230,72 @@ async fn account_net(pool: &PgPool, account: Uuid) -> Result<i64> {
     Ok(net.unwrap_or(0))
 }
 
+/// Create a manual account (one with no email source). Returns its id.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_account(
+    pool: &PgPool,
+    user: Uuid,
+    name: &str,
+    kind: &str,
+    currency: &str,
+    credit_limit_cents: Option<i64>,
+    trea_bps: Option<i32>,
+) -> Result<Uuid> {
+    let id: Uuid = sqlx::query_scalar(
+        r#"insert into accounts (user_id, name, kind, currency, credit_limit_cents, trea_bps)
+           values ($1,$2,$3,$4,$5,$6) returning id"#,
+    )
+    .bind(user)
+    .bind(name)
+    .bind(kind)
+    .bind(currency)
+    .bind(credit_limit_cents)
+    .bind(trea_bps)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Update an account's editable fields (not its balance).
+#[allow(clippy::too_many_arguments)]
+pub async fn update_account(
+    pool: &PgPool,
+    user: Uuid,
+    id: Uuid,
+    name: &str,
+    kind: &str,
+    currency: &str,
+    credit_limit_cents: Option<i64>,
+    trea_bps: Option<i32>,
+) -> Result<()> {
+    sqlx::query(
+        r#"update accounts set name=$1, kind=$2, currency=$3,
+             credit_limit_cents=$4, trea_bps=$5
+           where id=$6 and user_id=$7"#,
+    )
+    .bind(name)
+    .bind(kind)
+    .bind(currency)
+    .bind(credit_limit_cents)
+    .bind(trea_bps)
+    .bind(id)
+    .bind(user)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete an account. Its raw_events keep their history (account_id is set null
+/// by the FK), so no transactions are lost.
+pub async fn delete_account(pool: &PgPool, user: Uuid, id: Uuid) -> Result<()> {
+    sqlx::query("delete from accounts where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(user)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Set an account's *current* balance: back-compute the opening balance so that
 /// opening + net = current, then refresh all balances.
 pub async fn set_account_balance(pool: &PgPool, user: Uuid, account: Uuid, current_cents: i64) -> Result<()> {

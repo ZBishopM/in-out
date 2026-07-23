@@ -52,6 +52,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/by_category", get(api_by_category))
         .route("/api/accounts", get(api_accounts))
         .route("/api/accounts/balance", post(api_set_balance))
+        .route("/api/accounts/create", post(api_create_account))
+        .route("/api/accounts/update", post(api_update_account))
+        .route("/api/accounts/delete", post(api_delete_account))
         .route("/api/transactions", get(api_transactions))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
@@ -142,6 +145,61 @@ async fn api_set_balance(
 ) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
     let user = user_id();
     db::set_account_balance(&st.pool, user, b.account_id, b.current_cents).await.map_err(err500)?;
+    read::accounts(&st.pool, user).await.map(Json).map_err(err500)
+}
+
+#[derive(Deserialize)]
+struct CreateAccountReq {
+    name: String,
+    kind: String,
+    currency: String,
+    credit_limit_cents: Option<i64>,
+    trea_bps: Option<i32>,
+}
+
+async fn api_create_account(
+    State(st): State<Arc<AppState>>,
+    Json(b): Json<CreateAccountReq>,
+) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
+    let user = user_id();
+    db::create_account(&st.pool, user, &b.name, &b.kind, &b.currency, b.credit_limit_cents, b.trea_bps)
+        .await
+        .map_err(err500)?;
+    read::accounts(&st.pool, user).await.map(Json).map_err(err500)
+}
+
+#[derive(Deserialize)]
+struct UpdateAccountReq {
+    id: uuid::Uuid,
+    name: String,
+    kind: String,
+    currency: String,
+    credit_limit_cents: Option<i64>,
+    trea_bps: Option<i32>,
+}
+
+async fn api_update_account(
+    State(st): State<Arc<AppState>>,
+    Json(b): Json<UpdateAccountReq>,
+) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
+    let user = user_id();
+    db::update_account(&st.pool, user, b.id, &b.name, &b.kind, &b.currency, b.credit_limit_cents, b.trea_bps)
+        .await
+        .map_err(err500)?;
+    read::accounts(&st.pool, user).await.map(Json).map_err(err500)
+}
+
+#[derive(Deserialize)]
+struct DeleteAccountReq {
+    id: uuid::Uuid,
+}
+
+async fn api_delete_account(
+    State(st): State<Arc<AppState>>,
+    Json(b): Json<DeleteAccountReq>,
+) -> Result<Json<Vec<read::AccountRow>>, ApiErr> {
+    let user = user_id();
+    db::delete_account(&st.pool, user, b.id).await.map_err(err500)?;
     read::accounts(&st.pool, user).await.map(Json).map_err(err500)
 }
 

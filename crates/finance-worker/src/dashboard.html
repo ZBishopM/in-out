@@ -40,11 +40,17 @@
   .catrow .track { background:var(--panel2); border-radius:6px; height:14px; overflow:hidden; }
   .catrow .fill { height:100%; background:linear-gradient(90deg,var(--accent),#6366f1); border-radius:6px; }
   .catrow .ca { font-variant-numeric:tabular-nums; font-weight:600; font-size:.85rem; }
-  .acct { display:flex; justify-content:space-between; align-items:center; padding:.45rem 0; border-bottom:1px solid var(--line); gap:.5rem; }
+  .acct { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; padding:.5rem 0; border-bottom:1px solid var(--line); gap:.5rem; }
+  .acct-main { min-width:0; }
   .acct .n { font-weight:600; } .acct .kind { color:var(--muted); font-size:.75rem; }
-  .acct-right { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; justify-content:flex-end; }
-  .bal-in { width:6rem; background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:.3rem .4rem; font-size:.8rem; }
-  .bal-save { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:.3rem .55rem; font-size:.75rem; cursor:pointer; }
+  .acct-right { display:flex; align-items:center; gap:.6rem; }
+  .edit-toggle { background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px; padding:.2rem .5rem; font-size:.7rem; cursor:pointer; }
+  .acct-edit, .acct-add { flex-basis:100%; display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.5rem; align-items:center; }
+  .acct-edit[hidden] { display:none; }
+  .acct-edit input, .acct-add input, .acct-edit select, .acct-add select { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:.35rem .45rem; font-size:.8rem; width:9rem; }
+  .acct-edit .e-save, .acct-add button { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:.35rem .7rem; font-size:.78rem; cursor:pointer; width:auto; }
+  .acct-edit .e-del { background:transparent; color:var(--out); border:1px solid var(--out); border-radius:6px; padding:.35rem .7rem; font-size:.78rem; cursor:pointer; width:auto; }
+  .acct-add { border-top:1px solid var(--line); padding-top:.75rem; margin-top:.75rem; }
   .neg { color:var(--out); } .pos { color:var(--in); }
   .err { color:var(--out); }
 </style>
@@ -76,6 +82,14 @@
   <section>
     <h2>Cuentas</h2>
     <div id="accounts"></div>
+    <div class="acct-add">
+      <input id="add-name" placeholder="nombre (ej. BCP Ahorro Soles)" />
+      <input id="add-kind" placeholder="tipo (débito/crédito/ahorro)" />
+      <select id="add-cur"><option>PEN</option><option>USD</option></select>
+      <input id="add-limit" type="number" step="0.01" placeholder="línea (tarjeta)" />
+      <input id="add-trea" type="number" step="0.01" placeholder="TREA %" />
+      <button id="add-btn">+ Agregar cuenta</button>
+    </div>
   </section>
 
   <section>
@@ -90,33 +104,90 @@ const sym = c => c === 'USD' ? '$' : 'S/';
 const money = (cents, c='PEN') => sym(c) + ' ' + (cents/100).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
 const get = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+' → '+r.status); return r.json(); };
 
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(url + ' → ' + r.status);
+  return r.json();
+}
+const escAttr = s => String(s).replace(/"/g, '&quot;');
+const curOpts = cur => ['PEN', 'USD'].map(c => `<option ${c === cur ? 'selected' : ''}>${c}</option>`).join('');
+const centsToUnit = c => (c == null ? '' : c / 100);
+
+function acctExtra(a) {
+  if (a.credit_limit_cents != null) {
+    const used = Math.max(0, -a.balance_cents);
+    const avail = a.credit_limit_cents + a.balance_cents;
+    return `<div class="kind">Usado ${money(used, a.currency)} · Disp. ${money(avail, a.currency)} · Línea ${money(a.credit_limit_cents, a.currency)}</div>`;
+  }
+  if (a.trea_bps != null) return `<div class="kind">TREA ${(a.trea_bps / 100).toFixed(2)}%</div>`;
+  return '';
+}
+
 function renderAccounts(accounts) {
   const el = document.getElementById('accounts');
-  el.innerHTML = accounts.map(a =>
-    `<div class="acct">
-       <div><div class="n">${a.name}</div><div class="kind">${a.kind} · ${a.currency}</div></div>
-       <div class="acct-right">
-         <span class="${a.balance_cents<0?'neg':'pos'}">${money(a.balance_cents,a.currency)}</span>
-         <input class="bal-in" id="bal-${a.id}" type="number" step="0.01" placeholder="saldo real" />
-         <button class="bal-save" data-id="${a.id}">guardar</button>
-       </div>
-     </div>`).join('') || '<span class="kind">sin cuentas</span>';
-  el.querySelectorAll('.bal-save').forEach(btn => {
-    btn.onclick = async () => {
-      const id = btn.dataset.id;
-      const v = parseFloat(document.getElementById('bal-' + id).value);
-      if (isNaN(v)) return;
-      const old = btn.textContent; btn.textContent = '…';
-      try {
-        const r = await fetch('/api/accounts/balance', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ account_id: id, current_cents: Math.round(v * 100) })
-        });
-        if (!r.ok) throw new Error(r.status);
-        renderAccounts(await r.json());
-      } catch (e) { btn.textContent = 'error'; setTimeout(() => (btn.textContent = old), 1500); }
-    };
+  el.innerHTML = accounts.map(a => `
+    <div class="acct">
+      <div class="acct-main">
+        <div class="n">${a.name}</div>
+        <div class="kind">${a.kind} · ${a.currency}</div>
+        ${acctExtra(a)}
+      </div>
+      <div class="acct-right">
+        <span class="${a.balance_cents < 0 ? 'neg' : 'pos'}">${money(a.balance_cents, a.currency)}</span>
+        <button class="edit-toggle" data-id="${a.id}">editar</button>
+      </div>
+      <div class="acct-edit" id="edit-${a.id}" hidden>
+        <input class="e-name" value="${escAttr(a.name)}" placeholder="nombre" />
+        <input class="e-kind" value="${escAttr(a.kind)}" placeholder="tipo" />
+        <select class="e-cur">${curOpts(a.currency)}</select>
+        <input class="e-bal" type="number" step="0.01" placeholder="saldo actual (${a.currency})" />
+        <input class="e-limit" type="number" step="0.01" placeholder="línea crédito" value="${centsToUnit(a.credit_limit_cents)}" />
+        <input class="e-trea" type="number" step="0.01" placeholder="TREA %" value="${a.trea_bps != null ? a.trea_bps / 100 : ''}" />
+        <button class="e-save" data-id="${a.id}">guardar</button>
+        <button class="e-del" data-id="${a.id}">borrar</button>
+      </div>
+    </div>`).join('') || '<span class="kind">sin cuentas</span>';
+
+  el.querySelectorAll('.edit-toggle').forEach(b => b.onclick = () => {
+    const ed = document.getElementById('edit-' + b.dataset.id); ed.hidden = !ed.hidden;
   });
+  el.querySelectorAll('.e-save').forEach(btn => btn.onclick = async () => {
+    const id = btn.dataset.id;
+    const s = document.getElementById('edit-' + id);
+    const txt = q => s.querySelector(q).value.trim();
+    const cents = q => { const v = s.querySelector(q).value.trim(); return v === '' ? null : Math.round(parseFloat(v) * 100); };
+    btn.textContent = '…';
+    try {
+      await postJSON('/api/accounts/update', {
+        id, name: txt('.e-name'), kind: txt('.e-kind'), currency: s.querySelector('.e-cur').value,
+        credit_limit_cents: cents('.e-limit'), trea_bps: cents('.e-trea')
+      });
+      const bal = txt('.e-bal');
+      const latest = bal !== '' ? await postJSON('/api/accounts/balance', { account_id: id, current_cents: Math.round(parseFloat(bal) * 100) }) : await get('/api/accounts');
+      renderAccounts(latest);
+    } catch (e) { btn.textContent = 'error'; setTimeout(() => (btn.textContent = 'guardar'), 1500); }
+  });
+  el.querySelectorAll('.e-del').forEach(btn => btn.onclick = async () => {
+    if (!confirm('¿Borrar esta cuenta? Su historial de movimientos se conserva.')) return;
+    try { renderAccounts(await postJSON('/api/accounts/delete', { id: btn.dataset.id })); }
+    catch (e) { btn.textContent = 'error'; }
+  });
+}
+
+function wireAddAccount() {
+  document.getElementById('add-btn').onclick = async () => {
+    const v = id => document.getElementById(id).value.trim();
+    const cents = id => { const x = v(id); return x === '' ? null : Math.round(parseFloat(x) * 100); };
+    if (!v('add-name')) return;
+    try {
+      const latest = await postJSON('/api/accounts/create', {
+        name: v('add-name'), kind: v('add-kind') || 'otros', currency: document.getElementById('add-cur').value,
+        credit_limit_cents: cents('add-limit'), trea_bps: cents('add-trea')
+      });
+      ['add-name', 'add-kind', 'add-limit', 'add-trea'].forEach(id => (document.getElementById(id).value = ''));
+      renderAccounts(latest);
+    } catch (e) { document.getElementById('add-btn').textContent = 'error'; }
+  };
 }
 
 function bars(elBars, elLabels, data, valueFn, labelFn, tipFn) {
@@ -161,6 +232,7 @@ async function main() {
        <span class="ca">${money(c.out_cents)}</span></div>`).join('') || '<span class="kind">sin datos</span>';
 
     renderAccounts(accounts);
+    wireAddAccount();
 
     document.getElementById('txs').innerHTML = txs.map(t => {
       const d = new Date(t.occurred_at).toLocaleString('es-PE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});

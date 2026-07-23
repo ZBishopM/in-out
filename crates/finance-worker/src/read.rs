@@ -41,6 +41,8 @@ pub struct AccountRow {
     pub currency: String,
     pub balance_cents: i64,
     pub opening_balance_cents: i64,
+    pub credit_limit_cents: Option<i64>,
+    pub trea_bps: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -117,8 +119,9 @@ pub async fn by_category(pool: &PgPool, user: Uuid) -> Result<Vec<CategoryRow>> 
 }
 
 pub async fn accounts(pool: &PgPool, user: Uuid) -> Result<Vec<AccountRow>> {
-    let rows: Vec<(Uuid, String, String, String, i64, i64)> = sqlx::query_as(
-        r#"select id, name, kind, currency, balance_cents, opening_balance_cents
+    let rows: Vec<(Uuid, String, String, String, i64, i64, Option<i64>, Option<i32>)> = sqlx::query_as(
+        r#"select id, name, kind, currency, balance_cents, opening_balance_cents,
+                  credit_limit_cents, trea_bps
            from accounts where user_id = $1 order by name"#,
     )
     .bind(user)
@@ -126,14 +129,20 @@ pub async fn accounts(pool: &PgPool, user: Uuid) -> Result<Vec<AccountRow>> {
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, name, kind, currency, balance_cents, opening_balance_cents)| AccountRow {
-            id,
-            name,
-            kind,
-            currency,
-            balance_cents,
-            opening_balance_cents,
-        })
+        .map(
+            |(id, name, kind, currency, balance_cents, opening_balance_cents, credit_limit_cents, trea_bps)| {
+                AccountRow {
+                    id,
+                    name,
+                    kind,
+                    currency,
+                    balance_cents,
+                    opening_balance_cents,
+                    credit_limit_cents,
+                    trea_bps,
+                }
+            },
+        )
         .collect())
 }
 

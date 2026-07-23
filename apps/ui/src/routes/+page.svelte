@@ -90,11 +90,11 @@
       const { invoke } = await import('@tauri-apps/api/core');
       const auth = apiUser ? 'Basic ' + btoa(`${apiUser}:${apiPass}`) : '';
       const raw = await invoke<string>('api_get', { url: apiUrl.replace(/\/$/, '') + '/api/accounts', authorization: auth });
-      const accts = JSON.parse(raw) as { kind: string; currency: string; balance_cents: number }[];
+      const accts = JSON.parse(raw) as { currency: string; balance_cents: number; credit_limit_cents: number | null }[];
       const RATE = 3.75;
-      // Available cash = non-card accounts (debit/wallet/PayPal), PEN-equivalent.
+      // Available cash = accounts without a credit line (debit/wallet/PayPal), PEN-equivalent.
       const cents = accts
-        .filter((a) => a.kind !== 'card')
+        .filter((a) => a.credit_limit_cents == null)
         .reduce((s, a) => s + a.balance_cents * (a.currency === 'USD' ? RATE : 1), 0);
       budgetSoles = Math.max(0, Math.round(cents / 100));
       saldoStatus = `Disponible S/ ${budgetSoles} (cuentas sin tarjetas, USD×${RATE}). Ajusta saldos reales en el dashboard.`;
