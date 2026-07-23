@@ -94,6 +94,26 @@
   @keyframes growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .bar > i { transform-origin: bottom; animation: growy .7s cubic-bezier(.22,.61,.36,1) both; }
   .catrow .fill { transform-origin: left; animation: growx .7s cubic-bezier(.22,.61,.36,1) both; }
+
+  /* floating tooltip (styled, follows the cursor) */
+  #tip {
+    position: fixed; z-index: 1000; pointer-events: none; white-space: nowrap;
+    transform: translate(-50%, -100%) scale(.9); transform-origin: bottom center;
+    background: var(--panel); color: var(--fg); font-size: .72rem; font-weight: 650;
+    padding: .35rem .6rem; border-radius: 9px;
+    box-shadow: 4px 4px 11px var(--sh-dark), -2px -2px 7px var(--sh-light);
+    opacity: 0; transition: opacity .14s ease, transform .14s ease;
+  }
+  #tip.show { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+
+  /* hover highlights — react to where the cursor is */
+  .bar > i, .catrow .fill { transition: filter .15s ease; }
+  .bar:hover > i { filter: brightness(1.4) saturate(1.1); }
+  .catrow { transition: transform .15s ease; }
+  .catrow:hover { transform: translateX(4px); }
+  .catrow:hover .fill { filter: brightness(1.25); }
+  tr { transition: background .15s ease; }
+  tbody tr:hover { background: #2c231e; }
   .tile { transition: transform .2s ease, box-shadow .2s ease; }
   .tile:hover { transform: translateY(-2px); }
 
@@ -250,7 +270,7 @@ function bars(elBars, elLabels, data, valueFn, labelFn, tipFn) {
   const max = Math.max(1, ...data.map(valueFn));
   elBars.innerHTML = data.map(d => {
     const h = Math.round(valueFn(d) / max * 100);
-    return `<div class="bar" data-label="${tipFn(d)}" title="${tipFn(d)}"><i style="height:${h}%"></i></div>`;
+    return `<div class="bar" data-tip="${tipFn(d)}"><i style="height:${h}%"></i></div>`;
   }).join('');
   elLabels.innerHTML = data.map(d => `<span>${labelFn(d)}</span>`).join('');
 }
@@ -320,7 +340,7 @@ async function main() {
 
     const cmax = Math.max(1, ...cats.map(c => c.out_cents));
     document.getElementById('cats').innerHTML = cats.map(c =>
-      `<div class="catrow" title="${c.category}: ${money(c.out_cents)}"><span class="cn">${c.category}</span>
+      `<div class="catrow" data-tip="${c.category}: ${money(c.out_cents)}"><span class="cn">${c.category}</span>
        <span class="track"><span class="fill" style="width:${Math.round(c.out_cents / cmax * 100)}%"></span></span>
        <span class="ca">${money(c.out_cents)}</span></div>`).join('') || '<span class="kind">sin datos</span>';
 
@@ -340,6 +360,27 @@ async function main() {
     document.getElementById('sub').innerHTML = `<span class="err">error: ${e.message}</span>`;
   }
 }
+function initTooltip() {
+  const tip = document.createElement('div');
+  tip.id = 'tip';
+  document.body.appendChild(tip);
+  let raf = 0, x = 0, y = 0, cur = null;
+  const place = () => { raf = 0; tip.style.left = x + 'px'; tip.style.top = (y - 16) + 'px'; };
+  document.addEventListener('mousemove', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (el) {
+      const t = el.getAttribute('data-tip');
+      if (t !== cur) { tip.textContent = t; cur = t; }
+      x = e.clientX; y = e.clientY;
+      tip.classList.add('show');
+      if (!raf) raf = requestAnimationFrame(place);
+    } else if (cur !== null) {
+      tip.classList.remove('show'); cur = null;
+    }
+  }, { passive: true });
+}
+
+initTooltip();
 main();
 </script>
 </body>
