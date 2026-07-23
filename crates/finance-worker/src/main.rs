@@ -34,6 +34,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Merge already-stored duplicate transactions, then exit.
+    if std::env::args().any(|a| a == "--rededup") {
+        let n = db::rededup(&pool, user).await?;
+        println!("merged {n} duplicate transactions");
+        return Ok(());
+    }
+
     if std::env::args().any(|a| a == "--seed") {
         seed::seed(&pool, user).await?;
         tracing::info!("seeded synthetic finance data");

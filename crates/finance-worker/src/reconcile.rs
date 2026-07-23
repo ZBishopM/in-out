@@ -21,8 +21,9 @@ pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
         return Ok(0);
     }
 
+    let cfg = ReconcileConfig::default();
     let raws: Vec<RawEvent> = evs.iter().map(|e| e.core.clone()).collect();
-    let clusters = cluster(&raws, &ReconcileConfig::default());
+    let clusters = cluster(&raws, &cfg);
 
     let mut created = 0usize;
     for c in &clusters {
@@ -35,25 +36,33 @@ pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
         let canon = settlement.or(receipt).expect("cluster is non-empty");
         let name_src = receipt.or(settlement).expect("cluster is non-empty");
         let occurred = members.iter().map(|m| m.core.occurred_at).min().unwrap();
+        let merchant = &name_src.core.merchant;
 
-        let category = categorize(&name_src.core.merchant, &canon.direction);
-        let tx = db::insert_transaction(
-            pool,
-            user,
-            occurred,
-            canon.core.amount_cents,
-            &canon.core.currency,
-            &canon.direction,
-            &name_src.core.merchant,
-            category,
+        // Cross-batch dedup: if this matches a transaction reconciled in an
+        // earlier batch (e.g. a bank auth then its settlement), attach to it
+        // instead of creating a duplicate.
+        let existing = db::find_matching_transaction(
+            pool, user, canon.core.amount_cents, &canon.core.currency, &canon.direction, occurred, merchant, &cfg,
         )
         .await?;
+
+        let tx = match existing {
+            Some(id) => id,
+            None => {
+                created += 1;
+                let category = categorize(merchant, &canon.direction);
+                db::insert_transaction(
+                    pool, user, occurred, canon.core.amount_cents, &canon.core.currency,
+                    &canon.direction, merchant, category,
+                )
+                .await?
+            }
+        };
 
         for m in &members {
             let role = if is_settlement(&m.source) { "settlement" } else { "receipt" };
             db::insert_link(pool, tx, m.id, role).await?;
         }
-        created += 1;
     }
 
     db::recompute_balances(pool, user).await?;

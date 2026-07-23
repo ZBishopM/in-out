@@ -6,11 +6,13 @@
 <title>in_out — finanzas</title>
 <style>
   :root {
+    color-scheme: dark;
     --bg:#201916; --panel:#241d1a; --line:#3a2e26;
     --fg:#efe4d8; --muted:#a89a8b; --out:#d98c6b; --in:#a9bb8b; --accent:#e6a15c;
     --amber-glow:#f4bd7e; --terra:#cd7f59;
     --sh-dark:#120c09; --sh-light:#34281f; --r:18px;
   }
+  input, select { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; color:var(--fg); font-family: system-ui, "Cantarell", "Segoe UI", sans-serif;
     background: radial-gradient(130% 80% at 50% -10%, #2b221d 0%, #221b17 55%, #1e1714 100%); min-height:100vh; }
@@ -48,8 +50,8 @@
 
   .catrow { display:grid; grid-template-columns:120px 1fr auto; align-items:center; gap:.7rem; padding:.4rem 0; }
   .catrow .cn { font-size:.85rem; }
-  .catrow .track { background:#1b1310; border-radius:999px; height:15px; overflow:hidden; box-shadow:inset 2px 2px 4px var(--sh-dark); }
-  .catrow .fill { height:100%; border-radius:999px; background:linear-gradient(90deg,var(--terra),var(--accent)); box-shadow:0 0 10px -2px var(--amber-glow); }
+  .catrow .track { display:block; background:#1b1310; border-radius:999px; height:15px; overflow:hidden; box-shadow:inset 2px 2px 4px var(--sh-dark); }
+  .catrow .fill { display:block; height:100%; min-width:3px; border-radius:999px; background:linear-gradient(90deg,var(--terra),var(--accent)); box-shadow:0 0 10px -2px var(--amber-glow); }
   .catrow .ca { font-variant-numeric:tabular-nums; font-weight:700; font-size:.85rem; }
 
   .acct { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; padding:.65rem 0; border-bottom:1px solid var(--line); gap:.5rem; }
@@ -75,7 +77,7 @@
   .sec-head h2 { margin:0; }
   .chev { color:var(--muted); font-size:1.15rem; line-height:1; transition:transform .3s ease; }
   section.collapsed .chev { transform:rotate(-90deg); }
-  .sec-body { display:grid; grid-template-rows:1fr; transition:grid-template-rows .35s cubic-bezier(.22,.61,.36,1); margin-top:1rem; }
+  .sec-body { display:grid; grid-template-rows:1fr; grid-template-columns:minmax(0,1fr); transition:grid-template-rows .35s cubic-bezier(.22,.61,.36,1); margin-top:1rem; }
   section.collapsed .sec-body { grid-template-rows:0fr; margin-top:0; }
   .sec-inner { overflow:hidden; min-height:0; }
 
@@ -87,9 +89,11 @@
   section:nth-of-type(3){animation-delay:.28s} section:nth-of-type(4){animation-delay:.34s}
   section:nth-of-type(5){animation-delay:.40s} section:nth-of-type(6){animation-delay:.46s}
 
-  /* growth transitions */
-  .bar > i { transition: height .7s cubic-bezier(.22,.61,.36,1); }
-  .catrow .fill { transition: width .7s cubic-bezier(.22,.61,.36,1); }
+  /* growth animations (scale — no rAF/inline-width dependency) */
+  @keyframes growy { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @keyframes growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .bar > i { transform-origin: bottom; animation: growy .7s cubic-bezier(.22,.61,.36,1) both; }
+  .catrow .fill { transform-origin: left; animation: growx .7s cubic-bezier(.22,.61,.36,1) both; }
   .tile { transition: transform .2s ease, box-shadow .2s ease; }
   .tile:hover { transform: translateY(-2px); }
 
@@ -244,12 +248,11 @@ function wireAddAccount() {
 
 function bars(elBars, elLabels, data, valueFn, labelFn, tipFn) {
   const max = Math.max(1, ...data.map(valueFn));
-  elBars.innerHTML = data.map(d => `<div class="bar" data-label="${tipFn(d)}"><i style="height:0%"></i></div>`).join('');
+  elBars.innerHTML = data.map(d => {
+    const h = Math.round(valueFn(d) / max * 100);
+    return `<div class="bar" data-label="${tipFn(d)}" title="${tipFn(d)}"><i style="height:${h}%"></i></div>`;
+  }).join('');
   elLabels.innerHTML = data.map(d => `<span>${labelFn(d)}</span>`).join('');
-  const grow = () => elBars.querySelectorAll('.bar > i').forEach((el, i) => {
-    el.style.height = Math.round(valueFn(data[i]) / max * 100) + '%';
-  });
-  requestAnimationFrame(() => requestAnimationFrame(grow));
 }
 
 function countUp(el, target, cur) {
@@ -316,13 +319,10 @@ async function main() {
       hours, h=>h.out_cents, h=>h.hour%3===0?String(h.hour):'', h=>`${h.hour}:00 — ${money(h.out_cents)}`);
 
     const cmax = Math.max(1, ...cats.map(c => c.out_cents));
-    const catsEl = document.getElementById('cats');
-    catsEl.innerHTML = cats.map(c =>
-      `<div class="catrow"><span class="cn">${c.category}</span>
-       <span class="track"><span class="fill" style="width:0%"></span></span>
+    document.getElementById('cats').innerHTML = cats.map(c =>
+      `<div class="catrow" title="${c.category}: ${money(c.out_cents)}"><span class="cn">${c.category}</span>
+       <span class="track"><span class="fill" style="width:${Math.round(c.out_cents / cmax * 100)}%"></span></span>
        <span class="ca">${money(c.out_cents)}</span></div>`).join('') || '<span class="kind">sin datos</span>';
-    requestAnimationFrame(() => requestAnimationFrame(() =>
-      catsEl.querySelectorAll('.catrow .fill').forEach((el, i) => el.style.width = Math.round(cats[i].out_cents / cmax * 100) + '%')));
 
     renderAccounts(accounts);
     wireAddAccount();

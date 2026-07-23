@@ -1,8 +1,9 @@
 //! Postgres access for finance reconciliation.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use in_out_core::RawEvent;
+use chrono::{DateTime, Duration, Utc};
+use in_out_core::finance::trigram_sim;
+use in_out_core::{RawEvent, ReconcileConfig};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -210,6 +211,100 @@ pub async fn recompute_balances(pool: &PgPool, user: Uuid) -> Result<()> {
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Find an existing transaction that this candidate is a duplicate of — used to
+/// catch a bank auth + settlement that arrive in *different* ingest batches
+/// (the second one is compared against already-reconciled transactions, not
+/// just the current batch). SQL prefilters by currency/direction/amount/window;
+/// merchant similarity is checked in Rust.
+#[allow(clippy::too_many_arguments)]
+pub async fn find_matching_transaction(
+    pool: &PgPool,
+    user: Uuid,
+    amount_cents: i64,
+    currency: &str,
+    direction: &str,
+    occurred_at: DateTime<Utc>,
+    merchant: &str,
+    cfg: &ReconcileConfig,
+) -> Result<Option<Uuid>> {
+    let lo = occurred_at - Duration::seconds(cfg.window_secs);
+    let hi = occurred_at + Duration::seconds(cfg.window_secs);
+    let cands: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        r#"select id, merchant from transactions
+           where user_id = $1 and currency = $2 and direction = $3
+             and abs(amount_cents - $4) <= $5
+             and occurred_at between $6 and $7"#,
+    )
+    .bind(user)
+    .bind(currency)
+    .bind(direction)
+    .bind(amount_cents)
+    .bind(cfg.amount_tol_cents)
+    .bind(lo)
+    .bind(hi)
+    .fetch_all(pool)
+    .await?;
+    for (id, m) in cands {
+        if trigram_sim(merchant, m.as_deref().unwrap_or("")) >= cfg.merchant_min_sim {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// Merge already-stored duplicate transactions (one-shot cleanup for data that
+/// was reconciled before cross-batch matching existed). Keeps the earliest of
+/// each duplicate group, moves the others' links onto it, deletes the extras.
+/// Returns how many were removed.
+pub async fn rededup(pool: &PgPool, user: Uuid) -> Result<u64> {
+    let txs: Vec<(Uuid, String, i64, String, DateTime<Utc>, Option<String>)> = sqlx::query_as(
+        r#"select id, currency, amount_cents, direction, occurred_at, merchant
+           from transactions where user_id = $1 order by occurred_at"#,
+    )
+    .bind(user)
+    .fetch_all(pool)
+    .await?;
+
+    let cfg = ReconcileConfig::default();
+    let mut kept: Vec<(Uuid, String, i64, String, DateTime<Utc>, String)> = Vec::new();
+    let mut removed = 0u64;
+
+    for (id, cur, amt, dir, at, merch) in txs {
+        let m = merch.unwrap_or_default();
+        let hit = kept.iter().find(|(_, kcur, kamt, kdir, kat, km)| {
+            kcur == &cur
+                && kdir == &dir
+                && (kamt - amt).abs() <= cfg.amount_tol_cents
+                && (*kat - at).num_seconds().abs() <= cfg.window_secs
+                && trigram_sim(&m, km) >= cfg.merchant_min_sim
+        });
+        if let Some((keep_id, ..)) = hit {
+            let keep_id = *keep_id;
+            sqlx::query(
+                r#"update transaction_links l set transaction_id = $1
+                   where l.transaction_id = $2
+                     and not exists (select 1 from transaction_links k
+                                     where k.transaction_id = $1 and k.raw_event_id = l.raw_event_id)"#,
+            )
+            .bind(keep_id)
+            .bind(id)
+            .execute(pool)
+            .await?;
+            sqlx::query("delete from transactions where id = $1 and user_id = $2")
+                .bind(id)
+                .bind(user)
+                .execute(pool)
+                .await?;
+            removed += 1;
+        } else {
+            kept.push((id, cur, amt, dir, at, m));
+        }
+    }
+
+    recompute_balances(pool, user).await?;
+    Ok(removed)
 }
 
 /// Net (signed) of the transactions attributed to `account`.
