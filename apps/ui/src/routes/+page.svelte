@@ -213,6 +213,14 @@
 <style>
   :global(body) { margin: 0; background: #201916; }
 
+  /* scrollbars — warm, slim, pill (match the app aesthetic) */
+  :global(*) { scrollbar-width: thin; scrollbar-color: #5a4636 transparent; }
+  :global(::-webkit-scrollbar) { width: 11px; height: 11px; }
+  :global(::-webkit-scrollbar-track) { background: transparent; }
+  :global(::-webkit-scrollbar-thumb) { background: #5a4636; border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-thumb:hover) { background: #e6a15c; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-corner) { background: transparent; }
+
   main {
     /* warm-dark neomorphic palette (caelestia-ish) */
     --bg: #241d1a;
