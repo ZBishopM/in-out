@@ -2,8 +2,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use in_out_core::finance::trigram_sim;
-use in_out_core::{RawEvent, ReconcileConfig};
+use in_out_core::{merchant_sim, RawEvent, ReconcileConfig};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -247,7 +246,7 @@ pub async fn find_matching_transaction(
     .fetch_all(pool)
     .await?;
     for (id, m) in cands {
-        if trigram_sim(merchant, m.as_deref().unwrap_or("")) >= cfg.merchant_min_sim {
+        if merchant_sim(merchant, m.as_deref().unwrap_or("")) >= cfg.merchant_min_sim {
             return Ok(Some(id));
         }
     }
@@ -278,7 +277,7 @@ pub async fn rededup(pool: &PgPool, user: Uuid) -> Result<u64> {
                 && kdir == &dir
                 && (kamt - amt).abs() <= cfg.amount_tol_cents
                 && (*kat - at).num_seconds().abs() <= cfg.window_secs
-                && trigram_sim(&m, km) >= cfg.merchant_min_sim
+                && merchant_sim(&m, km) >= cfg.merchant_min_sim
         });
         if let Some((keep_id, ..)) = hit {
             let keep_id = *keep_id;

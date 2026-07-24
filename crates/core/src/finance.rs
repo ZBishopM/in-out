@@ -90,7 +90,34 @@ pub fn is_duplicate(a: &RawEvent, b: &RawEvent, cfg: &ReconcileConfig) -> bool {
     if (a.occurred_at - b.occurred_at).num_seconds().abs() > cfg.window_secs {
         return false;
     }
-    trigram_sim(&a.merchant, &b.merchant) >= cfg.merchant_min_sim
+    merchant_sim(&a.merchant, &b.merchant) >= cfg.merchant_min_sim
+}
+
+/// Merchant similarity after normalizing away payment-gateway noise, so a bank
+/// charge like `PYU*CABIFY` matches a `CABIFY PE` receipt.
+pub fn merchant_sim(a: &str, b: &str) -> f32 {
+    trigram_sim(&normalize_merchant(a), &normalize_merchant(b))
+}
+
+fn is_processor(p: &str) -> bool {
+    matches!(p, "pyu" | "dlc" | "mp" | "mpp" | "payu" | "pago" | "dl")
+}
+
+/// Strip a known payment-processor prefix (`PYU*CABIFY` -> `cabify`) and a
+/// trailing country tag (` PE`/` PERU`); lowercased. Merchant names that use `*`
+/// themselves (e.g. `UBER *TRIP`) are left intact — only known gateways strip.
+pub fn normalize_merchant(s: &str) -> String {
+    let low = s.trim().to_lowercase();
+    let base: &str = match low.split_once('*') {
+        Some((p, rest)) if is_processor(p.trim()) => rest,
+        _ => low.as_str(),
+    };
+    let base = base.trim();
+    let base = base
+        .strip_suffix(" pe")
+        .or_else(|| base.strip_suffix(" peru"))
+        .unwrap_or(base);
+    base.trim().to_string()
 }
 
 /// Overlap coefficient (Szymkiewicz–Simpson) of the character-trigram sets:
@@ -145,6 +172,18 @@ mod tests {
         let receipt = ev(2550, "Uber Trip", 9);
         let charge = ev(2550, "UBER *TRIP HELP.UBER.COM", 10);
         assert!(is_duplicate(&receipt, &charge, &ReconcileConfig::default()));
+    }
+
+    #[test]
+    fn gateway_prefix_dedups() {
+        // "PYU*CABIFY" (bank via PayU) vs "CABIFY PE" (same charge), same amount.
+        let a = ev(1388, "CABIFY PE", 22);
+        let b = ev(1388, "PYU*CABIFY", 4);
+        assert!(is_duplicate(&a, &b, &ReconcileConfig::default()));
+        assert_eq!(normalize_merchant("PYU*CABIFY"), "cabify");
+        assert_eq!(normalize_merchant("CABIFY PE"), "cabify");
+        // A real "*" in the merchant name is preserved (UBER is not a gateway).
+        assert!(normalize_merchant("UBER *TRIP").contains("uber"));
     }
 
     #[test]
