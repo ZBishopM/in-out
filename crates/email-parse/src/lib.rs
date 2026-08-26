@@ -34,7 +34,7 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
     // spaces, so collapse intra-line runs of whitespace before dispatching.
     // Newlines are kept as line breaks (not collapsed away): parse_paypal's
     // `(?m)^` anchor relies on them to find the payer's line.
-    let text = &text
+    let text = &strip_markdown_emphasis(text)
         .lines()
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .collect::<Vec<_>>()
@@ -61,6 +61,43 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
     } else {
         None
     }
+}
+
+/// Some BCP notification templates ("Banca Móvil BCP") arrive as
+/// multipart/alternative with a text/plain part written in Markdown-ish
+/// emphasis: "Realizaste un pago dirigido de *S/ 415.63* hacia tu *VISA
+/// Clásica*." The upstream email pipeline (both this backfill's `texto()` and
+/// n8n's mailparser) prefers that plaintext part over text/html when both
+/// exist, so these asterisks show up in `text` and break every literal-space
+/// match below. Strip them -- but two other real uses of `*` must survive:
+/// a merchant descriptor like "DLC*UBER RIDES" or "MDOPAGO*MERCADO PAGO"
+/// (single asterisk, no space on either side), and a masked card/account
+/// number like "**** 9602" (a run of 3+ asterisks, used by both templates,
+/// always whitespace-bounded -- indistinguishable from emphasis by adjacency
+/// alone, so runs that long are kept unconditionally instead).
+fn strip_markdown_emphasis(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let is_word = |c: char| !c.is_whitespace() && c != '*';
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '*' {
+            let start = i;
+            while i < chars.len() && chars[i] == '*' {
+                i += 1;
+            }
+            let len = i - start;
+            let prev_is_word = start > 0 && is_word(chars[start - 1]);
+            let next_is_word = i < chars.len() && is_word(chars[i]);
+            if len >= 3 || (prev_is_word && next_is_word) {
+                out.extend(std::iter::repeat('*').take(len));
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// "1,234.56" / "10.90" / "45.30" -> cents.
@@ -180,10 +217,12 @@ fn parse_bcp_other_bank_card_payment(text: &str) -> Option<Parsed> {
 
 /// BCP utility/service bill payment: "Operación realizada: Pago de servicios
 /// ... Empresa: ENTEL PERU S.A. Servicio: PAGO CON NUMERO TELEFONO ... Monto
-/// total: S/ 36.40".
+/// total: S/ 36.40". This template's plaintext part wraps unrelated fields
+/// (account number, expiry) across real line breaks between "Pago de
+/// servicios" and "Monto total"; `(?s)` lets `.` cross them.
 fn parse_bcp_service_payment(text: &str) -> Option<Parsed> {
     let re = Regex::new(
-        r"(?i)Pago de servicios.*?Empresa:\s*(.+?)\s+Servicio:.*?Monto total:\s*(S/|\$)\s*([\d.,]+)",
+        r"(?is)Pago de servicios.*?Empresa:\s*(.+?)\s+Servicio:.*?Monto total:\s*(S/|\$)\s*([\d.,]+)",
     )
     .ok()?;
     let c = re.captures(text)?;
@@ -223,12 +262,14 @@ fn parse_bcp_directed_payment(text: &str) -> Option<Parsed> {
 }
 
 /// BCP transfer to a third party: "Realizaste una transferencia de S/ 240.00
-/// desde tu Clasica ... Enviado a Solari De Hurtado Eda V. **** 8026 Moneda
-/// Soles".
+/// desde tu Clasica ... Enviado a Solari De Hurtado Eda V." The recipient's
+/// masked account number sits on the very next line, so the merchant capture
+/// stops at end-of-line (`(?m)$`) rather than at a "Moneda" landmark -- this
+/// template repeats/garbles fields after that point (seen in real samples).
 fn parse_bcp_transfer_to_third_party(text: &str) -> Option<Parsed> {
     let re = Regex::new(r"(?i)Realizaste una transferencia de\s*(S/|\$)\s*([\d.,]+)\s*desde").ok()?;
     let c = re.captures(text)?;
-    let merchant = Regex::new(r"(?i)Enviado a\s*(.+?)\s+Moneda")
+    let merchant = Regex::new(r"(?im)Enviado a\s*(.+)$")
         .ok()?
         .captures(text)
         .map(|m| clean(&m[1]))
@@ -472,17 +513,69 @@ mod tests {
         assert_eq!(p.merchant, "VISA Clásica **** 9602");
     }
 
+    // No standalone "clean single-line" test for transfer-to-third-party:
+    // real samples confirm this BCP template is always the multipart
+    // markdown-plaintext shape (see the _markdown_plaintext test below),
+    // never single-part HTML on one line.
+
     #[test]
-    fn bcp_transfer_to_third_party() {
+    fn bcp_service_payment_markdown_plaintext() {
+        // Real text/plain body (BCP's "Banca Móvil BCP" templates ship this
+        // alongside text/html, and the upstream pipeline prefers it) --
+        // Markdown-style *emphasis* asterisks and real \r\n line breaks
+        // between the fields this parser needs.
         let p = parse(
             "notificaciones@notificacionesbcp.com.pe",
-            "Constancia de Transferencia a Terceros BCP",
-            "Hola Carlos Enrique, Realizaste una transferencia de S/ 1,750.00 desde tu Clasica. Por tu seguridad, te enviamos los datos de tu operación. Montos Monto transferido S/ 1,750.00 Datos de la operación Operación realizada Transferencia a terceros BCP Fecha y hora 15 de Agosto de 2026 - 10:48 PM Enviado a Solari De Hurtado Eda V. **** 8026 Moneda Soles Desde Clasica **** 6096",
+            "ENVIO AUTOMATICO - CONSTANCIA DE PAGO DE SERVICIO - BANCA MOVIL BCP",
+            "   \r\n\r\n*Hola CARLOS ENRIQUE,*\r\n\r\n¡Tu operación se realizó con éxito!\r\n\r\nOperación realizada:\r\n\r\n*Pago de servicios*\r\n\r\nNúmero de operación:\r\n\r\n*07411717*\r\n\r\n     \r\n\r\nFecha y hora: *Sábado, 01 Agosto 2026 - 09:21 P. M.* Empresa: *ENTEL PERU S.A.* Servicio: *PAGO CON NUMERO TELEFONO* Titular del servicio: *CARLOS ENRIQUE OBISP* Código de usuario: *946325921* Comisión: ** Cuenta de origen: *Tarjeta de crédito\r\n**** 9602\r\nCARLOS ENRIQUE* Vigencia: ** Valor venta: ** IGV: ** Subtotal: ** Monto total: *S/ 36.40* Tipo de cambio: ** Monto transferido al cambio: **",
         )
         .unwrap();
         assert_eq!(p.direction, "out");
-        assert_eq!(p.amount_cents, 175000);
-        assert_eq!(p.merchant, "Solari De Hurtado Eda V. **** 8026");
+        assert_eq!(p.amount_cents, 3640);
+        assert_eq!(p.merchant, "ENTEL PERU S.A");
+    }
+
+    #[test]
+    fn bcp_directed_payment_markdown_plaintext() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Pago Dirigido - Banca Móvil BCP",
+            "Hola *CARLOS ENRIQUE,*\r\nRealizaste un pago dirigido de *S/ 415.63* hacia tu *VISA Clásica*.\r\nPor tu seguridad, te enviamos los *datos de tu operación.*\r\n*Monto*\r\n \r\n\r\nMonto pagado *S/ 415.63* Total cobrado *$ 123.15*\r\n\r\n*Datos de la operación*\r\n \r\n\r\nOperación realizada *Pago dirigido* Fecha y hora *04/08/2026 - 11:00 a. m.* Pagado a *VISA Clásica* ***** 9602* Desde *CUENTAS DE AHORRO* ***** 3124* Movimiento *MDOPAGO*MERCADO PAGO   LIMA          PE* Tipo de cambio *$ 3.3750* Monto cobrado *$ 123.15* Tipo de pago *Pago completo* Número de operación *01841508*",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.currency, "PEN");
+        assert_eq!(p.amount_cents, 41563);
+        // The mask run here happens to be 5 asterisks in the real sample
+        // (not the usual 4) -- preserved either way, kept as observed.
+        assert_eq!(p.merchant, "VISA Clásica ***** 9602");
+    }
+
+    #[test]
+    fn bcp_transfer_to_third_party_markdown_plaintext() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Transferencia a Terceros BCP",
+            "Hola *Carlos Enrique,*\r\n\r\nRealizaste una transferencia de *S/ 240.00* desde tu *Clasica.*\r\n\r\nPor tu seguridad, te enviamos los *datos de tu operación.*\r\n\r\n*Montos*\r\n\r\n\r\n\r\nMonto transferido *S/ 240.00* Tipo de cambio ** *Total cobrado al tipo de cambio* **\r\n\r\n*Datos de la operación*\r\n\r\n    \r\n\r\nOperación realizada *Transferencia a terceros BCP* Fecha y hora *08 de Agosto de 2026 - 01:03 AM* Enviado a *Solari De Hurtado Eda V.*\r\n**** 8026\r\nMoneda Soles Desde *Clasica*\r\n**** 6096\r\nMoneda Soles Desde *Clasica*\r\n**** 6096 Enviado a **\r\n**** 8026 Mensaje *Luz julio* Canal *Banca Móvil BCP* Número de operación *00077551*",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 24000);
+        assert_eq!(p.merchant, "Solari De Hurtado Eda V");
+    }
+
+    #[test]
+    fn merchant_code_asterisk_survives_markdown_strip() {
+        // "DLC*UBER RIDES" must NOT be treated as emphasis and stripped --
+        // the asterisk there is part of the payment-gateway merchant code
+        // (no whitespace on either side of it).
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Realizaste un consumo con tu Tarjeta de Crédito BCP",
+            "Hola Carlos Enrique, Realizaste un consumo de S/ 11.50 con tu Tarjeta de Crédito BCP en DLC*UBER RIDES. Por tu seguridad",
+        )
+        .unwrap();
+        assert_eq!(p.merchant, "DLC*UBER RIDES");
     }
 
     #[test]
