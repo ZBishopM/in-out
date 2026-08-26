@@ -47,6 +47,9 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
             .or_else(|| parse_bcp_yapeo_received(text))
             .or_else(|| parse_bcp_own_card_payment(text))
             .or_else(|| parse_bcp_other_bank_card_payment(text))
+            .or_else(|| parse_bcp_service_payment(text))
+            .or_else(|| parse_bcp_directed_payment(text))
+            .or_else(|| parse_bcp_transfer_to_third_party(text))
     } else if s.contains("netinterbank.com.pe") {
         parse_interbank_card(text)
     } else if s.contains("sip.pe") {
@@ -54,7 +57,7 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
     } else if s.contains("operaciones.agora.pe") {
         parse_interbank_op(text)
     } else if s.contains("scotiabank.com.pe") {
-        parse_scotiabank(text)
+        parse_scotiabank(text).or_else(|| parse_scotiabank_plin_sent(text))
     } else {
         None
     }
@@ -172,6 +175,91 @@ fn parse_bcp_other_bank_card_payment(text: &str) -> Option<Parsed> {
         currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
         direction: "out".into(),
         merchant: format!("Pago tarjeta {bank}"),
+    })
+}
+
+/// BCP utility/service bill payment: "Operación realizada: Pago de servicios
+/// ... Empresa: ENTEL PERU S.A. Servicio: PAGO CON NUMERO TELEFONO ... Monto
+/// total: S/ 36.40".
+fn parse_bcp_service_payment(text: &str) -> Option<Parsed> {
+    let re = Regex::new(
+        r"(?i)Pago de servicios.*?Empresa:\s*(.+?)\s+Servicio:.*?Monto total:\s*(S/|\$)\s*([\d.,]+)",
+    )
+    .ok()?;
+    let c = re.captures(text)?;
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&c[3])?,
+        currency: if &c[2] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant: clean(&c[1]),
+    })
+}
+
+/// BCP "pago dirigido" (directed payment, e.g. to a card via a savings
+/// account rather than the checking "Cuenta digital"): "Realizaste un pago
+/// dirigido de S/ 415.63 hacia tu VISA Clásica ... Pagado a VISA Clásica
+/// **** 9602 Desde CUENTAS DE AHORRO **** 3124". Uses "Monto pagado", not
+/// "Total cobrado" -- unlike the other-bank-card case, the two can be in
+/// different currencies here (paying a PEN bill from a USD account), and the
+/// bill amount is the more meaningful figure to record.
+fn parse_bcp_directed_payment(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?i)Realizaste un pago dirigido de\s*(S/|\$)\s*([\d.,]+)\s*hacia").ok()?;
+    let c = re.captures(text)?;
+    let merchant = Regex::new(r"(?i)Pagado a\s*(.+?)\s+Desde")
+        .ok()?
+        .captures(text)
+        .map(|m| clean(&m[1]))
+        .unwrap_or_else(|| "Pago dirigido BCP".into());
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
+    })
+}
+
+/// BCP transfer to a third party: "Realizaste una transferencia de S/ 240.00
+/// desde tu Clasica ... Enviado a Solari De Hurtado Eda V. **** 8026 Moneda
+/// Soles".
+fn parse_bcp_transfer_to_third_party(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?i)Realizaste una transferencia de\s*(S/|\$)\s*([\d.,]+)\s*desde").ok()?;
+    let c = re.captures(text)?;
+    let merchant = Regex::new(r"(?i)Enviado a\s*(.+?)\s+Moneda")
+        .ok()?
+        .captures(text)
+        .map(|m| clean(&m[1]))
+        .unwrap_or_else(|| "Transferencia BCP".into());
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
+    })
+}
+
+/// Scotiabank outgoing Plin: "Transferencia Plin ... Monto enviado: S/ 50.00
+/// ... Enviado a: Carlos Obi*** *** *** 921". Counterpart of
+/// `parse_scotiabank`'s "Monto recibido" (incoming).
+fn parse_scotiabank_plin_sent(text: &str) -> Option<Parsed> {
+    let c = Regex::new(r"(?i)Monto enviado:\s*(S/|\$)\s*([\d.,]+)").ok()?.captures(text)?;
+    let merchant = Regex::new(r"(?i)Enviado a:\s*(.+?)[\.\n]")
+        .ok()?
+        .captures(text)
+        .map(|m| clean(&m[1]))
+        .unwrap_or_else(|| "Plin".into());
+    Some(Parsed {
+        source: "scotiabank".into(),
+        account_hint: "scotiabank".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
     })
 }
 
@@ -353,6 +441,61 @@ mod tests {
             "Hola Carlos Enrique, Tu pago favorito \"amex gold\" fue creado correctamente. A continuación, te brindamos los detalles de tu operación. Detalle de favorito Fecha y hora 04 de Agosto de 2026 - 07:24 PM Operación Pago de Tarjeta Otros Bancos Titular Carlos Enrique Obispo R. Banco INTERBANK Tarjeta **** 6472",
         )
         .is_none());
+    }
+
+    #[test]
+    fn bcp_service_payment() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "ENVIO AUTOMATICO - CONSTANCIA DE PAGO DE SERVICIO - BANCA MOVIL BCP",
+            "Hola CARLOS ENRIQUE, ¡Tu operación se realizó con éxito! Operación realizada: Pago de servicios Número de operación: 07411717 Fecha y hora: Sábado, 01 Agosto 2026 - 09:21 P. M. Empresa: ENTEL PERU S.A. Servicio: PAGO CON NUMERO TELEFONO Titular del servicio: CARLOS ENRIQUE OBISP Código de usuario: 946325921 Cuenta de origen: Tarjeta de crédito **** 9602 CARLOS ENRIQUE Monto total: S/ 36.40",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 3640);
+        // clean() trims a trailing period (usually the sentence terminator);
+        // here it happens to eat the last dot of the abbreviation too.
+        assert_eq!(p.merchant, "ENTEL PERU S.A");
+    }
+
+    #[test]
+    fn bcp_directed_payment() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Pago Dirigido - Banca Móvil BCP",
+            "Hola CARLOS ENRIQUE, Realizaste un pago dirigido de S/ 415.63 hacia tu VISA Clásica . Por tu seguridad, te enviamos los datos de tu operación. Monto Monto pagado S/ 415.63 Total cobrado $ 123.15 Datos de la operación Operación realizada Pago dirigido Fecha y hora 04/08/2026 - 11:00 a. m. Pagado a VISA Clásica **** 9602 Desde CUENTAS DE AHORRO **** 3124 Movimiento MDOPAGO*MERCA",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 41563);
+        assert_eq!(p.currency, "PEN");
+        assert_eq!(p.merchant, "VISA Clásica **** 9602");
+    }
+
+    #[test]
+    fn bcp_transfer_to_third_party() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Transferencia a Terceros BCP",
+            "Hola Carlos Enrique, Realizaste una transferencia de S/ 1,750.00 desde tu Clasica. Por tu seguridad, te enviamos los datos de tu operación. Montos Monto transferido S/ 1,750.00 Datos de la operación Operación realizada Transferencia a terceros BCP Fecha y hora 15 de Agosto de 2026 - 10:48 PM Enviado a Solari De Hurtado Eda V. **** 8026 Moneda Soles Desde Clasica **** 6096",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 175000);
+        assert_eq!(p.merchant, "Solari De Hurtado Eda V. **** 8026");
+    }
+
+    #[test]
+    fn scotiabank_plin_sent() {
+        let p = parse(
+            "bancadigital@scotiabank.com.pe",
+            "Constancia de operación - Transferencia Plin",
+            "Hola Carlos, Esta es la constancia de tu transferencia Plin: 05 ago., 12:53 pm Transferencia Plin Número de operación 784.444.022.9730 Cuenta de origen: Cuenta Digital SBP *** ***8896 Monto enviado: S/ 50.00 Destino: Yape Comisión: Gratis Enviado a: Carlos Obi*** *** *** 921. Con Plin envías dinero gratis.",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 5000);
+        assert_eq!(p.source, "scotiabank");
     }
 
     #[test]
