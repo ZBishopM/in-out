@@ -28,11 +28,25 @@ pub struct Parsed {
 /// Dispatch to the right parser by sender. Returns `None` if the sender is
 /// unknown or the body doesn't match (e.g. a marketing email).
 pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
+    // HTML-stripped text (the common case for single-part-HTML bank emails)
+    // leaves ragged whitespace where tags used to sit -- e.g. "tu <b>Tarjeta"
+    // becomes "tu  Tarjeta". Several parsers below match literal single
+    // spaces, so collapse intra-line runs of whitespace before dispatching.
+    // Newlines are kept as line breaks (not collapsed away): parse_paypal's
+    // `(?m)^` anchor relies on them to find the payer's line.
+    let text = &text
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
     let s = sender.to_ascii_lowercase();
     if s.contains("paypal.com") {
         parse_paypal(text)
     } else if s.contains("notificacionesbcp.com.pe") {
         parse_bcp(text)
+            .or_else(|| parse_bcp_yapeo_received(text))
+            .or_else(|| parse_bcp_own_card_payment(text))
+            .or_else(|| parse_bcp_other_bank_card_payment(text))
     } else if s.contains("netinterbank.com.pe") {
         parse_interbank_card(text)
     } else if s.contains("sip.pe") {
@@ -74,23 +88,90 @@ fn parse_paypal(text: &str) -> Option<Parsed> {
     })
 }
 
-/// BCP card consumption (débito or crédito): "Realizaste un consumo de S/ 10.90
-/// con tu Tarjeta de Crédito BCP en DLC*UBER RIDES." The card type routes to a
-/// different account.
+/// BCP card consumption (débito or crédito), in soles or dollars: "Realizaste
+/// un consumo de S/ 10.90 con tu Tarjeta de Crédito BCP en DLC*UBER RIDES." /
+/// "...consumo de $ 10.00 con tu Tarjeta de Crédito BCP en ANOMALY." The card
+/// type routes to a different account.
 fn parse_bcp(text: &str) -> Option<Parsed> {
     let re = Regex::new(
-        r"(?i)consumo de\s*S/\s*([\d.,]+)\s*con tu Tarjeta de (Cr[ée]dito|D[ée]bito) BCP en\s*(.+?)[\.\n]",
+        r"(?i)consumo de\s*(S/|\$)\s*([\d.,]+)\s*con tu Tarjeta de (Cr[ée]dito|D[ée]bito) BCP en\s*(.+?)[\.\n]",
     )
     .ok()?;
     let c = re.captures(text)?;
-    let is_credito = c[2].to_lowercase().starts_with("cr");
+    let is_credito = c[3].to_lowercase().starts_with("cr");
     Some(Parsed {
         source: "bcp".into(),
         account_hint: if is_credito { "bcp_credito" } else { "bcp_debito" }.into(),
-        amount_cents: amount_to_cents(&c[1])?,
-        currency: "PEN".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
         direction: "out".into(),
+        merchant: clean(&c[4]),
+    })
+}
+
+/// BCP Yapeo received: "Recibiste un yapeo de S/ 200.00 de Milagros Ricapa
+/// Tolentino."
+fn parse_bcp_yapeo_received(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?i)Recibiste un yapeo de\s*(S/|\$)\s*([\d.,]+)\s*de\s*(.+?)[\.\n]").ok()?;
+    let c = re.captures(text)?;
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "in".into(),
         merchant: clean(&c[3]),
+    })
+}
+
+/// BCP own-card bill payment from the checking account: "Realizaste un pago a
+/// tu tarjeta de S/ 936.10 desde tu Cuenta digital ... Pagado a VISA Clásica
+/// **** 9602 Tipo de pago Pago total".
+fn parse_bcp_own_card_payment(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?i)Realizaste un pago a tu tarjeta de\s*(S/|\$)\s*([\d.,]+)\s*desde tu Cuenta digital")
+        .ok()?;
+    let c = re.captures(text)?;
+    let merchant = Regex::new(r"(?i)Pagado a\s*(.+?)\s+Tipo de pago")
+        .ok()?
+        .captures(text)
+        .map(|m| clean(&m[1]))
+        .unwrap_or_else(|| "Pago tarjeta propia BCP".into());
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
+    })
+}
+
+/// BCP payment toward a card at another bank: "Realizaste un Pago de tarjeta
+/// a otro banco de S/ 206.81 a INTERBANK desde tu Cuenta digital ... Comisión
+/// S/ 4.00 Total cobrado S/ 210.81". "Total cobrado" (payment + fee) is what
+/// actually left the BCP account; falls back to "Monto pagado" for the rare
+/// case with no fee line.
+fn parse_bcp_other_bank_card_payment(text: &str) -> Option<Parsed> {
+    let re = Regex::new(
+        r"(?i)Pago de tarjeta a otro banco de\s*(S/|\$)\s*[\d.,]+\s*a\s*(.+?)\s+desde tu Cuenta digital",
+    )
+    .ok()?;
+    let c = re.captures(text)?;
+    let bank = clean(&c[2]);
+    let amount = Regex::new(r"(?i)Total cobrado\s*(?:S/|\$)\s*([\d.,]+)")
+        .ok()?
+        .captures(text)
+        .map(|m| m[1].to_string())
+        .or_else(|| {
+            Regex::new(r"(?i)Monto pagado\s*(?:S/|\$)\s*([\d.,]+)").ok()?.captures(text).map(|m| m[1].to_string())
+        })?;
+    Some(Parsed {
+        source: "bcp".into(),
+        account_hint: "bcp_debito".into(),
+        amount_cents: amount_to_cents(&amount)?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant: format!("Pago tarjeta {bank}"),
     })
 }
 
@@ -207,6 +288,71 @@ mod tests {
         assert_eq!(p.amount_cents, 1150);
         assert_eq!(p.merchant, "DLC*UBER RIDES");
         assert_eq!(p.account_hint, "bcp_credito");
+    }
+
+    #[test]
+    fn bcp_credito_usd() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Realizaste un consumo con tu Tarjeta de Crédito BCP - Servicio",
+            "Hola Carlos Enrique, Realizaste un consumo de $ 10.00 con tu Tarjeta de Crédito BCP en ANOMALY. Por tu seguridad",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.currency, "USD");
+        assert_eq!(p.amount_cents, 1000);
+        assert_eq!(p.merchant, "ANOMALY");
+    }
+
+    #[test]
+    fn bcp_yapeo_received() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de recepción de Yapeo a celular BCP",
+            "Hola Carlos Enrique, Recibiste un yapeo de S/ 200.00 de Milagros Ricapa Tolentino. Por tu seguridad te enviamos los datos de tu yapeo.",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "in");
+        assert_eq!(p.amount_cents, 20000);
+        assert_eq!(p.merchant, "Milagros Ricapa Tolentino");
+        assert_eq!(p.account_hint, "bcp_debito");
+    }
+
+    #[test]
+    fn bcp_own_card_payment() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Pago de Tarjeta de Crédito Propia",
+            "Hola Carlos Enrique, Realizaste un pago a tu tarjeta de S/ 936.10 desde tu Cuenta digital . A continuación, te enviamos los datos de tu operación. Montos Monto pagado S/ 936.10 Datos de la operación Operación realizada Pago de tarjeta propia BCP Fecha y hora 04 de Agosto de 2026 - 10:57 AM Pagado a VISA Clásica **** 9602 Tipo de pago Pago total",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 93610);
+        assert_eq!(p.merchant, "VISA Clásica **** 9602");
+    }
+
+    #[test]
+    fn bcp_other_bank_card_payment() {
+        let p = parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Pago de Tarjeta de Crédito de Otros Bancos",
+            "Hola Carlos Enrique, Realizaste un Pago de tarjeta a otro banco de S/ 206.81 a INTERBANK desde tu Cuenta digital . A continuación, te enviamos los datos de tu operación. Montos Monto pagado S/ 206.81 Comisión S/ 4.00 Total cobrado S/ 210.81 Tipo de cambio S/ 3.3760 Total cobrado al tipo de cambio $ 62.44",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        // "Total cobrado" (payment + fee), not the bare "Monto pagado".
+        assert_eq!(p.amount_cents, 21081);
+        assert_eq!(p.merchant, "Pago tarjeta INTERBANK");
+    }
+
+    #[test]
+    fn bcp_card_payment_favorite_ignored() {
+        assert!(parse(
+            "notificaciones@notificacionesbcp.com.pe",
+            "Constancia de Favorito: Agregaste un Pago de Tarjeta de Crédito de Otros",
+            "Hola Carlos Enrique, Tu pago favorito \"amex gold\" fue creado correctamente. A continuación, te brindamos los detalles de tu operación. Detalle de favorito Fecha y hora 04 de Agosto de 2026 - 07:24 PM Operación Pago de Tarjeta Otros Bancos Titular Carlos Enrique Obispo R. Banco INTERBANK Tarjeta **** 6472",
+        )
+        .is_none());
     }
 
     #[test]
