@@ -160,6 +160,18 @@ pub async fn insert_discarded_event(
     Ok(res.rows_affected() > 0)
 }
 
+/// Remove a stale `discarded_events` row once its email successfully parses
+/// on a later ingest (a parser can be added after the fact for a template
+/// that was previously unrecognized). No-op if it was never there.
+pub async fn delete_discarded_event(pool: &PgPool, user: Uuid, gmail_msg_id: &str) -> Result<()> {
+    sqlx::query("delete from discarded_events where user_id = $1 and gmail_msg_id = $2")
+        .bind(user)
+        .bind(gmail_msg_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Insert a canonical transaction, returning its id.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_transaction(

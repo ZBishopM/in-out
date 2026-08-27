@@ -59,6 +59,11 @@ pub async fn ingest(pool: &PgPool, user: Uuid, emails: Vec<EmailIn>) -> Result<I
             continue;
         };
         parsed += 1;
+        // A parser may get added for a template that was previously logged
+        // as discarded (this is how the two Scotiabank ones above were
+        // found); clear the stale entry so it doesn't linger next to the
+        // now-successful raw_event.
+        db::delete_discarded_event(pool, user, &e.gmail_msg_id).await?;
 
         let (name, kind, currency) = account_meta(&p.account_hint);
         let account = db::ensure_account(pool, user, name, kind, currency).await?;
