@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(dashboard))
+        .route("/audit", get(audit_page))
         .route("/health", get(|| async { "ok" }))
         .route("/api/summary", get(api_summary))
         .route("/api/daily", get(api_daily))
@@ -56,6 +57,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/accounts/update", post(api_update_account))
         .route("/api/accounts/delete", post(api_delete_account))
         .route("/api/transactions", get(api_transactions))
+        .route("/api/audit/parsed", get(api_audit_parsed))
+        .route("/api/audit/discarded", get(api_audit_discarded))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
 
@@ -95,6 +98,10 @@ async fn dashboard() -> Html<&'static str> {
     Html(include_str!("../dashboard.html"))
 }
 
+async fn audit_page() -> Html<&'static str> {
+    Html(include_str!("../audit.html"))
+}
+
 #[derive(Deserialize)]
 struct DaysQ {
     #[serde(default = "default_days")]
@@ -111,6 +118,15 @@ struct LimitQ {
 }
 fn default_limit() -> i64 {
     50
+}
+
+#[derive(Deserialize)]
+struct AuditLimitQ {
+    #[serde(default = "default_audit_limit")]
+    limit: i64,
+}
+fn default_audit_limit() -> i64 {
+    300
 }
 
 async fn api_summary(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::SummaryRow>>, ApiErr> {
@@ -205,4 +221,18 @@ async fn api_delete_account(
 
 async fn api_transactions(State(st): State<Arc<AppState>>, Query(q): Query<LimitQ>) -> Result<Json<Vec<read::TxRow>>, ApiErr> {
     read::transactions(&st.pool, user_id(), q.limit.clamp(1, 500)).await.map(Json).map_err(err500)
+}
+
+async fn api_audit_parsed(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<AuditLimitQ>,
+) -> Result<Json<Vec<read::ParsedEventRow>>, ApiErr> {
+    read::audit_parsed(&st.pool, user_id(), q.limit.clamp(1, 2000)).await.map(Json).map_err(err500)
+}
+
+async fn api_audit_discarded(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<AuditLimitQ>,
+) -> Result<Json<Vec<read::DiscardedEventRow>>, ApiErr> {
+    read::audit_discarded(&st.pool, user_id(), q.limit.clamp(1, 2000)).await.map(Json).map_err(err500)
 }

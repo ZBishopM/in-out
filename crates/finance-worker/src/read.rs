@@ -146,6 +146,96 @@ pub async fn accounts(pool: &PgPool, user: Uuid) -> Result<Vec<AccountRow>> {
         .collect())
 }
 
+/// One email that produced a raw_event — the audit view's "parsed" side.
+#[derive(Serialize)]
+pub struct ParsedEventRow {
+    pub received_at: DateTime<Utc>,
+    pub sender: Option<String>,
+    pub subject: Option<String>,
+    pub gmail_msg_id: String,
+    pub source: String,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub direction: String,
+    pub merchant_raw: Option<String>,
+    /// Whether this raw_event is folded into a canonical transaction yet
+    /// (reconcile runs after every ingest batch, so "false" here usually
+    /// means something's actually wrong, not just "pending").
+    pub linked: bool,
+}
+
+/// One email the parser returned `None` for — the audit view's "discarded"
+/// side, for manually checking nothing real got missed.
+#[derive(Serialize)]
+pub struct DiscardedEventRow {
+    pub received_at: DateTime<Utc>,
+    pub sender: String,
+    pub subject: Option<String>,
+    pub gmail_msg_id: String,
+}
+
+pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<ParsedEventRow>> {
+    let rows: Vec<(
+        DateTime<Utc>,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        Option<String>,
+        bool,
+    )> = sqlx::query_as(
+        r#"select r.received_at, r.sender, r.subject, r.gmail_msg_id, r.source,
+                  r.amount_cents, r.currency, r.direction, r.merchant_raw,
+                  exists(select 1 from transaction_links l where l.raw_event_id = r.id) as linked
+           from raw_events r
+           where r.user_id = $1
+           order by r.received_at desc
+           limit $2"#,
+    )
+    .bind(user)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(received_at, sender, subject, gmail_msg_id, source, amount_cents, currency, direction, merchant_raw, linked)| {
+                ParsedEventRow {
+                    received_at,
+                    sender,
+                    subject,
+                    gmail_msg_id,
+                    source,
+                    amount_cents,
+                    currency,
+                    direction,
+                    merchant_raw,
+                    linked,
+                }
+            },
+        )
+        .collect())
+}
+
+pub async fn audit_discarded(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<DiscardedEventRow>> {
+    let rows: Vec<(DateTime<Utc>, String, Option<String>, String)> = sqlx::query_as(
+        r#"select received_at, sender, subject, gmail_msg_id
+           from discarded_events where user_id = $1
+           order by received_at desc limit $2"#,
+    )
+    .bind(user)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(received_at, sender, subject, gmail_msg_id)| DiscardedEventRow { received_at, sender, subject, gmail_msg_id })
+        .collect())
+}
+
 pub async fn transactions(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<TxRow>> {
     let rows: Vec<(DateTime<Utc>, String, i64, String, Option<String>)> = sqlx::query_as(
         r#"select occurred_at, direction, amount_cents, currency, merchant

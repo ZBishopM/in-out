@@ -85,13 +85,19 @@ pub async fn ensure_account(
 }
 
 /// Insert a raw event, deduped on (user, gmail_msg_id). Returns true if a new
-/// row was inserted (false if it already existed).
+/// row was inserted (false if it already existed). On a duplicate,
+/// `sender`/`subject` are still refreshed — those two columns were added
+/// after the first rows landed, so a re-ingest is how the backlog gets them
+/// filled in. `xmax = 0` is Postgres's own tell for "this row was inserted,
+/// not updated" inside an upsert's RETURNING.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_raw_event(
     pool: &PgPool,
     user: Uuid,
     account: Option<Uuid>,
     source: &str,
+    sender: &str,
+    subject: &str,
     gmail_msg_id: &str,
     received_at: DateTime<Utc>,
     amount_cents: i64,
@@ -99,24 +105,56 @@ pub async fn insert_raw_event(
     direction: &str,
     merchant: &str,
 ) -> Result<bool> {
-    let res = sqlx::query(
+    let inserted: bool = sqlx::query_scalar(
         r#"
         insert into raw_events
-          (user_id, account_id, source, gmail_msg_id, received_at,
+          (user_id, account_id, source, sender, subject, gmail_msg_id, received_at,
            amount_cents, currency, direction, merchant_raw)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        on conflict (user_id, gmail_msg_id) do nothing
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        on conflict (user_id, gmail_msg_id) do update
+          set sender = excluded.sender, subject = excluded.subject
+        returning (xmax = 0)
         "#,
     )
     .bind(user)
     .bind(account)
     .bind(source)
+    .bind(sender)
+    .bind(subject)
     .bind(gmail_msg_id)
     .bind(received_at)
     .bind(amount_cents)
     .bind(currency)
     .bind(direction)
     .bind(merchant)
+    .fetch_one(pool)
+    .await?;
+    Ok(inserted)
+}
+
+/// Log an email the parser discarded (unknown sender, or a body it couldn't
+/// match) — so it shows up for manual review instead of vanishing. Deduped
+/// like `insert_raw_event`; returns true if newly logged.
+pub async fn insert_discarded_event(
+    pool: &PgPool,
+    user: Uuid,
+    sender: &str,
+    subject: &str,
+    gmail_msg_id: &str,
+    received_at: DateTime<Utc>,
+) -> Result<bool> {
+    let res = sqlx::query(
+        r#"
+        insert into discarded_events (user_id, sender, subject, gmail_msg_id, received_at)
+        values ($1,$2,$3,$4,$5)
+        on conflict (user_id, gmail_msg_id) do nothing
+        "#,
+    )
+    .bind(user)
+    .bind(sender)
+    .bind(subject)
+    .bind(gmail_msg_id)
+    .bind(received_at)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() > 0)

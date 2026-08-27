@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>in_out — auditoría de correos</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --canvas:#0a0a0a; --panel:#0a0a0a;
+    --ink:#ffffff; --ink-secondary:rgb(255 255 255 / 56%); --ink-tertiary:rgb(255 255 255 / 50%);
+    --border:rgb(255 255 255 / 11%); --border-strong:rgb(255 255 255 / 18%);
+    --hover-fill:rgb(255 255 255 / 9%);
+    --out:#ff6b57; --in:#7ad694; --warn:#e8c15a;
+    --radius:10px; --radius-pill:999px;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; color:var(--ink); font-family: system-ui, "Segoe UI", sans-serif;
+    background: var(--canvas); min-height:100vh; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
+  h1 { font-size: 1.5rem; font-weight:600; letter-spacing:-.02em; margin: 0 0 .1rem; color:var(--ink); }
+  h1::before { content:'in_out'; display:block; font-size:.72rem; font-weight:600; letter-spacing:.12em; color:var(--ink-secondary); margin-bottom:.35rem; }
+  .sub { color: var(--ink-secondary); font-size: .8rem; margin: 0 0 1.6rem; }
+  .sub a { color:var(--ink-secondary); }
+
+  .tiles { display:grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap:1rem; margin-bottom:1.75rem; }
+  .tile { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.15rem; }
+  .tile .k { font-size:.68rem; color:var(--ink-secondary); letter-spacing:.04em; }
+  .tile .v { font-size:1.6rem; font-weight:600; margin-top:.25rem; font-variant-numeric:tabular-nums; letter-spacing:-.01em; color:var(--ink); }
+  .v.warn { color:var(--warn); } .v.out { color:var(--out); }
+
+  section { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:1.15rem 1.25rem; margin-bottom:1.5rem; }
+  .sec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; gap:1rem; flex-wrap:wrap; }
+  h2 { font-size:.72rem; letter-spacing:.04em; color:var(--ink-secondary); margin:0; font-weight:500; }
+  input[type=search] { background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.4rem .6rem; font-size:.78rem; width:16rem; max-width:100%; }
+  input[type=search]::placeholder { color:var(--ink-tertiary); }
+
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  th, td { text-align:left; padding:.5rem .5rem; border-bottom:1px solid var(--border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:16rem; }
+  th { color:var(--ink-secondary); font-weight:500; font-size:.66rem; letter-spacing:.04em; position:sticky; top:0; background:var(--panel); }
+  td.amt { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap; }
+  .amt.out { color:var(--out); } .amt.in { color:var(--in); }
+  .tbl-scroll { overflow-x:auto; max-height:60vh; overflow-y:auto; }
+  tr:hover { background: var(--hover-fill); }
+  a.gm { color:var(--ink-secondary); text-decoration:none; border-bottom:1px dotted var(--border-strong); }
+  a.gm:hover { color:var(--ink); }
+  .flag { display:inline-block; padding:.1rem .4rem; border-radius:var(--radius-pill); font-size:.66rem; border:1px solid var(--warn); color:var(--warn); }
+  .empty { color:var(--ink-tertiary); font-size:.8rem; padding:1rem 0; }
+  * { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 18%) transparent; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Auditoría de correos</h1>
+  <p class="sub">Cada correo bancario que llegó al ingest: en qué transacción terminó, o por qué se descartó. <a href="/">← volver al dashboard</a></p>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">CORREOS PARSEADOS</div><div class="v" id="t-parsed">—</div></div>
+    <div class="tile"><div class="k">DESCARTADOS</div><div class="v warn" id="t-discarded">—</div></div>
+    <div class="tile"><div class="k">SIN VINCULAR A TRANSACCIÓN</div><div class="v out" id="t-unlinked">—</div></div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <h2>PARSEADOS — se convirtieron en un movimiento</h2>
+      <input type="search" id="f-parsed" placeholder="filtrar por remitente, asunto, comercio...">
+    </div>
+    <div class="tbl-scroll">
+      <table id="tbl-parsed">
+        <thead><tr>
+          <th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Fuente</th><th>Comercio</th><th>Monto</th><th>Vinculado</th><th>Correo</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty-parsed" hidden>Nada todavía.</div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>DESCARTADOS — no coincidieron con ningún parser</h2>
+      <input type="search" id="f-discarded" placeholder="filtrar por remitente, asunto...">
+    </div>
+    <div class="tbl-scroll">
+      <table id="tbl-discarded">
+        <thead><tr><th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Correo</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty-discarded" hidden>Nada todavía.</div>
+  </section>
+</div>
+
+<script>
+const fmtDate = iso => new Date(iso).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
+const fmtAmt = (cents, currency) => (currency === 'USD' ? '$' : 'S/') + ' ' + (cents / 100).toFixed(2);
+const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function gmailLink(gmailMsgId) {
+  if (!gmailMsgId) return '';
+  const bare = gmailMsgId.replace(/^<|>$/g, '');
+  const url = 'https://mail.google.com/mail/u/0/#search/rfc822msgid%3A' + encodeURIComponent(bare);
+  return `<a class="gm" href="${url}" target="_blank" rel="noopener">abrir ↗</a>`;
+}
+
+async function loadParsed() {
+  const rows = await fetch('/api/audit/parsed?limit=2000').then(r => r.json());
+  document.getElementById('t-parsed').textContent = rows.length;
+  document.getElementById('t-unlinked').textContent = rows.filter(r => !r.linked).length;
+  const tbody = document.querySelector('#tbl-parsed tbody');
+  const render = filter => {
+    const f = filter.trim().toLowerCase();
+    const shown = rows.filter(r => !f || [r.sender, r.subject, r.merchant_raw, r.source]
+      .some(x => (x || '').toLowerCase().includes(f)));
+    tbody.innerHTML = shown.map(r => `
+      <tr>
+        <td>${fmtDate(r.received_at)}</td>
+        <td>${esc(r.sender) || '<span class="empty">—</span>'}</td>
+        <td>${esc(r.subject) || '<span class="empty">—</span>'}</td>
+        <td>${esc(r.source)}</td>
+        <td>${esc(r.merchant_raw) || '<span class="empty">—</span>'}</td>
+        <td class="amt ${r.direction}">${r.direction === 'in' ? '+' : '−'} ${fmtAmt(r.amount_cents, r.currency)}</td>
+        <td>${r.linked ? '' : '<span class="flag">sin vincular</span>'}</td>
+        <td>${gmailLink(r.gmail_msg_id)}</td>
+      </tr>`).join('');
+    document.getElementById('empty-parsed').hidden = shown.length > 0;
+  };
+  render('');
+  document.getElementById('f-parsed').addEventListener('input', e => render(e.target.value));
+}
+
+async function loadDiscarded() {
+  const rows = await fetch('/api/audit/discarded?limit=2000').then(r => r.json());
+  document.getElementById('t-discarded').textContent = rows.length;
+  const tbody = document.querySelector('#tbl-discarded tbody');
+  const render = filter => {
+    const f = filter.trim().toLowerCase();
+    const shown = rows.filter(r => !f || [r.sender, r.subject].some(x => (x || '').toLowerCase().includes(f)));
+    tbody.innerHTML = shown.map(r => `
+      <tr>
+        <td>${fmtDate(r.received_at)}</td>
+        <td>${esc(r.sender)}</td>
+        <td>${esc(r.subject) || '<span class="empty">—</span>'}</td>
+        <td>${gmailLink(r.gmail_msg_id)}</td>
+      </tr>`).join('');
+    document.getElementById('empty-discarded').hidden = shown.length > 0;
+  };
+  render('');
+  document.getElementById('f-discarded').addEventListener('input', e => render(e.target.value));
+}
+
+loadParsed();
+loadDiscarded();
+</script>
+</body>
+</html>

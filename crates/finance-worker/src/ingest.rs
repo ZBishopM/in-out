@@ -45,7 +45,9 @@ fn account_meta(hint: &str) -> (&'static str, &'static str, &'static str) {
 }
 
 /// Parse + persist a batch of emails, then reconcile. Unparseable emails
-/// (marketing, unknown senders) are skipped silently.
+/// (marketing, unknown senders) are logged to `discarded_events` — not
+/// dropped silently, so the dashboard's audit view can show them for manual
+/// review.
 pub async fn ingest(pool: &PgPool, user: Uuid, emails: Vec<EmailIn>) -> Result<IngestReport> {
     let received = emails.len();
     let mut parsed = 0;
@@ -53,6 +55,7 @@ pub async fn ingest(pool: &PgPool, user: Uuid, emails: Vec<EmailIn>) -> Result<I
 
     for e in &emails {
         let Some(p) = email_parse::parse(&e.sender, &e.subject, &e.text) else {
+            db::insert_discarded_event(pool, user, &e.sender, &e.subject, &e.gmail_msg_id, e.received_at).await?;
             continue;
         };
         parsed += 1;
@@ -65,6 +68,8 @@ pub async fn ingest(pool: &PgPool, user: Uuid, emails: Vec<EmailIn>) -> Result<I
             user,
             Some(account),
             &p.source,
+            &e.sender,
+            &e.subject,
             &e.gmail_msg_id,
             e.received_at,
             p.amount_cents,
