@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{db, reconcile};
+use reconcile::NewTransaction;
 
 /// One notification email handed in by the ingester (n8n Gmail node, etc.).
 #[derive(Debug, Clone, Deserialize)]
@@ -28,6 +29,10 @@ pub struct IngestReport {
     pub parsed: usize,
     pub inserted: usize,
     pub created_transactions: usize,
+    /// The transactions created this run, in detail -- the HTTP layer uses
+    /// this to post a Discord notification per new transaction.
+    #[serde(skip)]
+    pub new_transactions: Vec<NewTransaction>,
 }
 
 /// Map an `account_hint` from the parser to (display name, kind, currency).
@@ -88,6 +93,7 @@ pub async fn ingest(pool: &PgPool, user: Uuid, emails: Vec<EmailIn>) -> Result<I
         }
     }
 
-    let created_transactions = reconcile::reconcile(pool, user).await?;
-    Ok(IngestReport { received, parsed, inserted, created_transactions })
+    let new_transactions = reconcile::reconcile(pool, user).await?;
+    let created_transactions = new_transactions.len();
+    Ok(IngestReport { received, parsed, inserted, created_transactions, new_transactions })
 }

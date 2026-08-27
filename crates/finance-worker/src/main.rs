@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         tracing::info!("seeded synthetic finance data");
     }
 
-    let created = reconcile::reconcile(&pool, user).await?;
+    let created = reconcile::reconcile(&pool, user).await?.len();
     let (raw, tx, links) = db::summary(&pool, user).await?;
     tracing::info!(created, raw_events = raw, transactions = tx, links, "reconcile done");
     println!("raw_events={raw} transactions={tx} links={links} (created {created} this run)");

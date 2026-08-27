@@ -46,13 +46,18 @@
   a.gm:hover { color:var(--ink); }
   .flag { display:inline-block; padding:.1rem .4rem; border-radius:var(--radius-pill); font-size:.66rem; border:1px solid var(--warn); color:var(--warn); }
   .empty { color:var(--ink-tertiary); font-size:.8rem; padding:1rem 0; }
+  .note-input { background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.3rem .5rem; font-size:.78rem; width:12rem; max-width:100%; white-space:normal; }
+  .note-input::placeholder { color:var(--ink-tertiary); }
+  .note-input:focus-visible { outline:none; border-color:var(--border-strong); }
+  .note-input.saved { border-color:var(--in); }
+  .note-input.err { border-color:var(--out); }
   * { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 18%) transparent; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Auditoría de correos</h1>
-  <p class="sub">Cada correo bancario que llegó al ingest: en qué transacción terminó, o por qué se descartó. <a href="/">← volver al dashboard</a></p>
+  <p class="sub">Cada correo bancario que llegó al ingest: en qué transacción terminó, o por qué se descartó. La nota se guarda al salir del campo (o Enter). <a href="/">← volver al dashboard</a></p>
 
   <div class="tiles">
     <div class="tile"><div class="k">CORREOS PARSEADOS</div><div class="v" id="t-parsed">—</div></div>
@@ -68,7 +73,7 @@
     <div class="tbl-scroll">
       <table id="tbl-parsed">
         <thead><tr>
-          <th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Fuente</th><th>Comercio</th><th>Monto</th><th>Vinculado</th><th>Correo</th>
+          <th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Fuente</th><th>Comercio</th><th>Monto</th><th>Nota</th><th>Correo</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -103,14 +108,30 @@ function gmailLink(gmailMsgId) {
   return `<a class="gm" href="${url}" target="_blank" rel="noopener">abrir ↗</a>`;
 }
 
+async function saveNote(input) {
+  const txId = input.dataset.tx;
+  input.classList.remove('saved', 'err');
+  try {
+    const res = await fetch('/api/audit/note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction_id: txId, note: input.value }),
+    });
+    input.classList.add(res.ok ? 'saved' : 'err');
+  } catch {
+    input.classList.add('err');
+  }
+  setTimeout(() => input.classList.remove('saved'), 1200);
+}
+
 async function loadParsed() {
   const rows = await fetch('/api/audit/parsed?limit=2000').then(r => r.json());
   document.getElementById('t-parsed').textContent = rows.length;
-  document.getElementById('t-unlinked').textContent = rows.filter(r => !r.linked).length;
+  document.getElementById('t-unlinked').textContent = rows.filter(r => !r.transaction_id).length;
   const tbody = document.querySelector('#tbl-parsed tbody');
   const render = filter => {
     const f = filter.trim().toLowerCase();
-    const shown = rows.filter(r => !f || [r.sender, r.subject, r.merchant_raw, r.source]
+    const shown = rows.filter(r => !f || [r.sender, r.subject, r.merchant_raw, r.source, r.note]
       .some(x => (x || '').toLowerCase().includes(f)));
     tbody.innerHTML = shown.map(r => `
       <tr>
@@ -120,10 +141,16 @@ async function loadParsed() {
         <td>${esc(r.source)}</td>
         <td>${esc(r.merchant_raw) || '<span class="empty">—</span>'}</td>
         <td class="amt ${r.direction}">${r.direction === 'in' ? '+' : '−'} ${fmtAmt(r.amount_cents, r.currency)}</td>
-        <td>${r.linked ? '' : '<span class="flag">sin vincular</span>'}</td>
+        <td>${r.transaction_id
+          ? `<input class="note-input" data-tx="${r.transaction_id}" value="${esc(r.note)}" placeholder="anotar...">`
+          : '<span class="flag">sin vincular</span>'}</td>
         <td>${gmailLink(r.gmail_msg_id)}</td>
       </tr>`).join('');
     document.getElementById('empty-parsed').hidden = shown.length > 0;
+    tbody.querySelectorAll('.note-input').forEach(input => {
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+      input.addEventListener('blur', () => saveNote(input));
+    });
   };
   render('');
   document.getElementById('f-parsed').addEventListener('input', e => render(e.target.value));

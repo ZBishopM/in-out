@@ -6,10 +6,13 @@
 //!   POST /ingest           -> body: JSON array of EmailIn; returns IngestReport
 //!
 //! Env:
-//!   DATABASE_URL   (required)
-//!   INGEST_BIND    (optional) default 0.0.0.0:8090
-//!   INGEST_TOKEN   (optional) if set, requires `Authorization: Bearer <token>`
-//!   INOUT_USER_ID  (optional)
+//!   DATABASE_URL       (required)
+//!   INGEST_BIND        (optional) default 0.0.0.0:8090
+//!   INGEST_TOKEN       (optional) if set, requires `Authorization: Bearer <token>`
+//!   INOUT_USER_ID      (optional)
+//!   DISCORD_WEBHOOK_URL (optional) if set, posts one message per new
+//!                        transaction created by an /ingest call (the same
+//!                        webhook the watchdog uses)
 
 use std::sync::Arc;
 
@@ -19,12 +22,15 @@ use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use finance_worker::ingest::{ingest, EmailIn, IngestReport};
+use finance_worker::reconcile::NewTransaction;
 use finance_worker::{db, read, user_id};
 use serde::Deserialize;
 
 struct AppState {
     pool: sqlx::PgPool,
     token: Option<String>,
+    http: reqwest::Client,
+    discord_webhook: Option<String>,
 }
 
 #[tokio::main]
@@ -41,7 +47,8 @@ async fn main() -> anyhow::Result<()> {
     let db_url = std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL not set"))?;
     let pool = db::connect(&db_url).await?;
     let token = std::env::var("INGEST_TOKEN").ok();
-    let state = Arc::new(AppState { pool, token });
+    let discord_webhook = std::env::var("DISCORD_WEBHOOK_URL").ok();
+    let state = Arc::new(AppState { pool, token, http: reqwest::Client::new(), discord_webhook });
 
     let app = Router::new()
         .route("/", get(dashboard))
@@ -59,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/transactions", get(api_transactions))
         .route("/api/audit/parsed", get(api_audit_parsed))
         .route("/api/audit/discarded", get(api_audit_discarded))
+        .route("/api/audit/note", post(api_set_note))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
 
@@ -81,10 +89,32 @@ async fn ingest_handler(
         }
     }
     let user = user_id();
-    ingest(&st.pool, user, emails)
+    let report = ingest(&st.pool, user, emails)
         .await
-        .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if let Some(webhook) = &st.discord_webhook {
+        for tx in &report.new_transactions {
+            notify_discord(&st.http, webhook, tx).await;
+        }
+    }
+    Ok(Json(report))
+}
+
+/// Best-effort: a failed Discord post never fails the ingest itself.
+async fn notify_discord(client: &reqwest::Client, webhook: &str, tx: &NewTransaction) {
+    let lima = chrono::FixedOffset::west_opt(5 * 3600).expect("valid fixed offset");
+    let when = tx.occurred_at.with_timezone(&lima).format("%d %b, %I:%M %p").to_string();
+    let (emoji, sign) = if tx.direction == "in" { ("💰", "+") } else { ("💸", "−") };
+    let symbol = if tx.currency == "USD" { "$" } else { "S/" };
+    let content = format!(
+        "{emoji} **{sign} {symbol} {:.2}** · {} ({})\n{when} · <https://finanzas.danassistantassistant.website/audit>",
+        tx.amount_cents as f64 / 100.0,
+        tx.merchant,
+        tx.category,
+    );
+    if let Err(e) = client.post(webhook).json(&serde_json::json!({ "content": content })).send().await {
+        tracing::warn!(error = %e, transaction_id = %tx.id, "discord notify failed");
+    }
 }
 
 // ---- dashboard + read API (public route is gated by the reverse proxy) ----
@@ -235,4 +265,16 @@ async fn api_audit_discarded(
     Query(q): Query<AuditLimitQ>,
 ) -> Result<Json<Vec<read::DiscardedEventRow>>, ApiErr> {
     read::audit_discarded(&st.pool, user_id(), q.limit.clamp(1, 2000)).await.map(Json).map_err(err500)
+}
+
+#[derive(Deserialize)]
+struct SetNoteReq {
+    transaction_id: uuid::Uuid,
+    note: Option<String>,
+}
+
+async fn api_set_note(State(st): State<Arc<AppState>>, Json(b): Json<SetNoteReq>) -> Result<StatusCode, ApiErr> {
+    let note = b.note.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    db::set_transaction_note(&st.pool, user_id(), b.transaction_id, note).await.map_err(err500)?;
+    Ok(StatusCode::NO_CONTENT)
 }

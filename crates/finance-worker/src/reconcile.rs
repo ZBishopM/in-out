@@ -1,7 +1,9 @@
 //! Turn clusters of raw events into canonical transactions + links.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use in_out_core::{categorize, cluster, RawEvent, ReconcileConfig};
+use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -13,19 +15,33 @@ fn is_settlement(source: &str) -> bool {
     matches!(source, "bcp" | "bbva" | "interbank" | "scotiabank" | "card" | "visa" | "bank")
 }
 
-/// Reconcile all currently-unlinked raw events. Returns the number of
-/// transactions created this run.
-pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
+/// A transaction newly created by this reconcile run (as opposed to an
+/// existing one a new raw_event just got attached to) — enough detail to
+/// post a Discord notification about it.
+#[derive(Debug, Clone, Serialize)]
+pub struct NewTransaction {
+    pub id: Uuid,
+    pub occurred_at: DateTime<Utc>,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub direction: String,
+    pub merchant: String,
+    pub category: String,
+}
+
+/// Reconcile all currently-unlinked raw events. Returns the transactions
+/// created this run (not ones an event merely got attached to).
+pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<Vec<NewTransaction>> {
     let evs = db::load_unlinked(pool, user).await?;
     if evs.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let cfg = ReconcileConfig::default();
     let raws: Vec<RawEvent> = evs.iter().map(|e| e.core.clone()).collect();
     let clusters = cluster(&raws, &cfg);
 
-    let mut created = 0usize;
+    let mut created = Vec::new();
     for c in &clusters {
         let members: Vec<&Ev> = c.iter().map(|&i| &evs[i]).collect();
         let settlement = members.iter().copied().find(|m| is_settlement(&m.source));
@@ -49,13 +65,22 @@ pub async fn reconcile(pool: &PgPool, user: Uuid) -> Result<usize> {
         let tx = match existing {
             Some(id) => id,
             None => {
-                created += 1;
                 let category = categorize(merchant, &canon.direction);
-                db::insert_transaction(
+                let id = db::insert_transaction(
                     pool, user, occurred, canon.core.amount_cents, &canon.core.currency,
                     &canon.direction, merchant, category,
                 )
-                .await?
+                .await?;
+                created.push(NewTransaction {
+                    id,
+                    occurred_at: occurred,
+                    amount_cents: canon.core.amount_cents,
+                    currency: canon.core.currency.clone(),
+                    direction: canon.direction.clone(),
+                    merchant: merchant.clone(),
+                    category: category.to_string(),
+                });
+                id
             }
         };
 

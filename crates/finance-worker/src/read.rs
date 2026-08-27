@@ -158,10 +158,12 @@ pub struct ParsedEventRow {
     pub currency: String,
     pub direction: String,
     pub merchant_raw: Option<String>,
-    /// Whether this raw_event is folded into a canonical transaction yet
-    /// (reconcile runs after every ingest batch, so "false" here usually
-    /// means something's actually wrong, not just "pending").
-    pub linked: bool,
+    /// The canonical transaction this raw_event is folded into, if any
+    /// (reconcile runs after every ingest batch, so `None` here usually
+    /// means something's actually wrong, not just "pending"). `None` also
+    /// means there's nothing to attach a note to yet.
+    pub transaction_id: Option<Uuid>,
+    pub note: Option<String>,
 }
 
 /// One email the parser returned `None` for — the audit view's "discarded"
@@ -175,6 +177,7 @@ pub struct DiscardedEventRow {
 }
 
 pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<ParsedEventRow>> {
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         DateTime<Utc>,
         Option<String>,
@@ -185,12 +188,15 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<P
         String,
         String,
         Option<String>,
-        bool,
+        Option<Uuid>,
+        Option<String>,
     )> = sqlx::query_as(
         r#"select r.received_at, r.sender, r.subject, r.gmail_msg_id, r.source,
                   r.amount_cents, r.currency, r.direction, r.merchant_raw,
-                  exists(select 1 from transaction_links l where l.raw_event_id = r.id) as linked
+                  t.id as transaction_id, t.note
            from raw_events r
+           left join transaction_links l on l.raw_event_id = r.id
+           left join transactions t on t.id = l.transaction_id
            where r.user_id = $1
            order by r.received_at desc
            limit $2"#,
@@ -202,19 +208,30 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<P
     Ok(rows
         .into_iter()
         .map(
-            |(received_at, sender, subject, gmail_msg_id, source, amount_cents, currency, direction, merchant_raw, linked)| {
-                ParsedEventRow {
-                    received_at,
-                    sender,
-                    subject,
-                    gmail_msg_id,
-                    source,
-                    amount_cents,
-                    currency,
-                    direction,
-                    merchant_raw,
-                    linked,
-                }
+            |(
+                received_at,
+                sender,
+                subject,
+                gmail_msg_id,
+                source,
+                amount_cents,
+                currency,
+                direction,
+                merchant_raw,
+                transaction_id,
+                note,
+            )| ParsedEventRow {
+                received_at,
+                sender,
+                subject,
+                gmail_msg_id,
+                source,
+                amount_cents,
+                currency,
+                direction,
+                merchant_raw,
+                transaction_id,
+                note,
             },
         )
         .collect())

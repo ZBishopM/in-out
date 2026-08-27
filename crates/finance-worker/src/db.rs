@@ -204,6 +204,17 @@ pub async fn insert_transaction(
     Ok(id)
 }
 
+/// Set (or clear, with `None`) a transaction's user-written note.
+pub async fn set_transaction_note(pool: &PgPool, user: Uuid, id: Uuid, note: Option<&str>) -> Result<()> {
+    sqlx::query("update transactions set note = $1 where id = $2 and user_id = $3")
+        .bind(note)
+        .bind(id)
+        .bind(user)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Recompute `category` for every transaction from its merchant + direction.
 /// Returns the number updated. Used to backfill after category rules change.
 pub async fn recategorize_all(pool: &PgPool, user: Uuid) -> Result<u64> {
