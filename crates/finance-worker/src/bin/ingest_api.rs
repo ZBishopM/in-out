@@ -112,8 +112,18 @@ async fn notify_discord(client: &reqwest::Client, webhook: &str, tx: &NewTransac
         tx.merchant,
         tx.category,
     );
-    if let Err(e) = client.post(webhook).json(&serde_json::json!({ "content": content })).send().await {
-        tracing::warn!(error = %e, transaction_id = %tx.id, "discord notify failed");
+    match client.post(webhook).json(&serde_json::json!({ "content": content })).send().await {
+        // `send()` only errors on a network-level failure (timeout, DNS,
+        // connection refused) -- Discord returning a 4xx/5xx still comes
+        // back as `Ok(response)`, so that has to be checked separately or a
+        // bad/revoked webhook fails silently.
+        Ok(resp) if !resp.status().is_success() => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(%status, body, transaction_id = %tx.id, "discord notify rejected");
+        }
+        Err(e) => tracing::warn!(error = %e, transaction_id = %tx.id, "discord notify failed"),
+        Ok(_) => {}
     }
 }
 

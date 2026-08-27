@@ -33,6 +33,7 @@ services:
       - INGEST_BIND=0.0.0.0:8090
       - INGEST_TOKEN=${INGEST_TOKEN:?set in .env}
       - INOUT_USER_ID=${INOUT_USER_ID:-00000000-0000-0000-0000-000000000001}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - RUST_LOG=info
     depends_on:
       postgres:
