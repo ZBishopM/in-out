@@ -57,7 +57,10 @@ pub fn parse(sender: &str, _subject: &str, text: &str) -> Option<Parsed> {
     } else if s.contains("operaciones.agora.pe") {
         parse_interbank_op(text)
     } else if s.contains("scotiabank.com.pe") {
-        parse_scotiabank(text).or_else(|| parse_scotiabank_plin_sent(text))
+        parse_scotiabank(text)
+            .or_else(|| parse_scotiabank_plin_sent(text))
+            .or_else(|| parse_scotiabank_transport_recharge(text))
+            .or_else(|| parse_scotiabank_qr_payment(text))
     } else {
         None
     }
@@ -294,6 +297,49 @@ fn parse_scotiabank_plin_sent(text: &str) -> Option<Parsed> {
         .captures(text)
         .map(|m| clean(&m[1]))
         .unwrap_or_else(|| "Plin".into());
+    Some(Parsed {
+        source: "scotiabank".into(),
+        account_hint: "scotiabank".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
+    })
+}
+
+/// Scotiabank transit-card recharge: "Recarga con Plin Monto: S/ 7.00
+/// Número de tarjeta: ... Tipo de tarjeta: Tarjeta Metropolitano". This
+/// template puts every label/value on its own line with blank lines between
+/// them, so the connective needs `(?s)` to cross the real newlines.
+fn parse_scotiabank_transport_recharge(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?is)Recarga con Plin.*?Monto:\s*(S/|\$)\s*([\d.,]+)").ok()?;
+    let c = re.captures(text)?;
+    let merchant = Regex::new(r"(?i)Tipo de tarjeta:\s*(.+?)[\.\n]")
+        .ok()?
+        .captures(text)
+        .map(|m| format!("Recarga transporte — {}", clean(&m[1])))
+        .unwrap_or_else(|| "Recarga transporte".into());
+    Some(Parsed {
+        source: "scotiabank".into(),
+        account_hint: "scotiabank".into(),
+        amount_cents: amount_to_cents(&c[2])?,
+        currency: if &c[1] == "$" { "USD" } else { "PEN" }.into(),
+        direction: "out".into(),
+        merchant,
+    })
+}
+
+/// Scotiabank QR payment: "Pago con QR Pagaste con: Débito Mastercard ****
+/// **** **** 0465 Monto: S/ 9.90 Pagaste a: T7108MOLINA". Same one-field-
+/// per-line template as the transport recharge above.
+fn parse_scotiabank_qr_payment(text: &str) -> Option<Parsed> {
+    let re = Regex::new(r"(?is)Pago con QR.*?Monto:\s*(S/|\$)\s*([\d.,]+)").ok()?;
+    let c = re.captures(text)?;
+    let merchant = Regex::new(r"(?i)Pagaste a:\s*(.+?)[\.\n]")
+        .ok()?
+        .captures(text)
+        .map(|m| clean(&m[1]))
+        .unwrap_or_else(|| "Pago QR".into());
     Some(Parsed {
         source: "scotiabank".into(),
         account_hint: "scotiabank".into(),
@@ -589,6 +635,35 @@ mod tests {
         assert_eq!(p.direction, "out");
         assert_eq!(p.amount_cents, 5000);
         assert_eq!(p.source, "scotiabank");
+    }
+
+    #[test]
+    fn scotiabank_transport_recharge() {
+        // Real body: this template puts every label and value on its own
+        // line, blank lines in between -- needs (?s) to bridge them.
+        let p = parse(
+            "bancadigital@scotiabank.com.pe",
+            "Constancia de operación - Recarga de transporte con Plin",
+            "Hola Carlos , Scotiabank te envía la constancia de recarga de transporte.\n\n     Recarga con Plin \r\n                     \r\n                 \r\n                            Monto:\r\n                         \r\n                     \r\n                         S/ 7.00 \r\n                     \r\n                 \r\n                            Número de tarjeta:\r\n                         \r\n                         3655385387 \r\n                     \r\n                 \r\n                            Tipo de tarjeta:\r\n                         \r\n                         Tarjeta Metropolitano \r\n                     \r\n                 \r\n                            Cuenta de origen:\r\n                         \r\n                         Cuenta Ahorro *** ***8896 \r\n",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 700);
+        assert_eq!(p.source, "scotiabank");
+        assert_eq!(p.merchant, "Recarga transporte — Tarjeta Metropolitano");
+    }
+
+    #[test]
+    fn scotiabank_qr_payment() {
+        let p = parse(
+            "bancadigital@scotiabank.com.pe",
+            "Pago con QR",
+            "     Pago con QR \n\n                     \n\n                          Pagaste con:  \n\n                     \n\n                         Débito Mastercard \n\n                         **** **** **** 0465 \n\n                     \n\n                          Monto:  \n\n                     \n\n                             S/ 9.90 \n\n                         \n\n                     \n\n                          Pagaste a:  \n\n                     \n\n                         T7108MOLINA \n\n                     \n\n",
+        )
+        .unwrap();
+        assert_eq!(p.direction, "out");
+        assert_eq!(p.amount_cents, 990);
+        assert_eq!(p.merchant, "T7108MOLINA");
     }
 
     #[test]
