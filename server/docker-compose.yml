@@ -46,7 +46,9 @@ services:
     restart: unless-stopped
 
   n8n:
-    image: n8nio/n8n:latest
+    build:
+      context: .
+      dockerfile: n8n.Dockerfile
     environment:
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=5678
