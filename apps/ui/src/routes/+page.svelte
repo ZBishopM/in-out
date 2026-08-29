@@ -189,8 +189,8 @@
 
   <div class="bar" role="progressbar" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100">
     <div class="fill" style="width: {pct}%"></div>
-    <span class="bar-label">{pct}% · {soles(plan.spent_cents)} de {soles(plan.budget_cents)}</span>
   </div>
+  <p class="bar-label">{pct}% · {soles(plan.spent_cents)} de {soles(plan.budget_cents)}</p>
   <p class="hint">
     Comprables ya: {plan.items.filter((a) => a.affordable).length}/{plan.items.length}.
     {#if plan.next_gap_cents !== null}
@@ -214,38 +214,38 @@
 </main>
 
 <style>
-  :global(body) { margin: 0; background: #201916; }
+  :global(body) { margin: 0; background: #0a0a0a; }
 
-  /* scrollbars — warm, slim, pill (match the app aesthetic) */
-  :global(*) { scrollbar-width: thin; scrollbar-color: #5a4636 transparent; }
+  /* scrollbars — neutral ink, no color cast */
+  :global(*) { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 18%) transparent; }
   :global(::-webkit-scrollbar) { width: 11px; height: 11px; }
   :global(::-webkit-scrollbar-track) { background: transparent; }
-  :global(::-webkit-scrollbar-thumb) { background: #5a4636; border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
-  :global(::-webkit-scrollbar-thumb:hover) { background: #e6a15c; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-thumb) { background: rgb(255 255 255 / 18%); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-thumb:hover) { background: rgb(255 255 255 / 30%); background-clip: padding-box; }
   :global(::-webkit-scrollbar-corner) { background: transparent; }
 
   main {
-    /* warm-dark neomorphic palette (caelestia-ish) */
-    --bg: #241d1a;
-    --txt: #efe4d8;
-    --muted: #a4948650;
-    --muted-txt: #a89a8b;
-    --amber: #e6a15c;
-    --amber-glow: #f4bd7e;
-    --terra: #cd7f59;
-    --sage: #a9bb8b;
-    --clay: #d98c6b;
-    --sh-dark: #120c09;
-    --sh-light: #34281f;
-    --r: 20px;
+    /* scandinavian-design dark-canvas tokens — near-black canvas, white ink,
+       alpha ladder inverted per the skill's dark-canvas guidance (not a 1:1
+       flip of the light percentages: interaction fills run ~1.5x, tertiary
+       lifted to 50% since prices/status here are real content, not glyphs) */
+    --canvas: #0a0a0a;
+    --ink: #ffffff;
+    --ink-secondary: rgb(255 255 255 / 56%);
+    --ink-tertiary: rgb(255 255 255 / 50%);
+    --border: rgb(255 255 255 / 11%);
+    --border-strong: rgb(255 255 255 / 18%);
+    --hover-fill: rgb(255 255 255 / 9%);
+    --pressed-fill: rgb(255 255 255 / 14%);
+    --radius: 10px;
+    --radius-pill: 999px;
 
-    font-family: system-ui, "Cantarell", "Segoe UI", sans-serif;
+    font-family: system-ui, "Segoe UI", sans-serif;
     max-width: 560px;
     margin: 0 auto;
     padding: 2.25rem 1.5rem 3rem;
-    color: var(--txt);
-    background:
-      radial-gradient(130% 90% at 50% -20%, #2b221d 0%, #221b17 55%, #1f1815 100%);
+    color: var(--ink);
+    background: var(--canvas);
     min-height: 100vh;
     box-sizing: border-box;
   }
@@ -253,124 +253,117 @@
   /* header */
   .head { margin-bottom: 1.75rem; }
   .brand {
-    display: inline-block; font-size: .72rem; font-weight: 700;
-    letter-spacing: .28em; text-transform: uppercase; color: var(--amber);
+    display: inline-block; font-size: .72rem; font-weight: 600;
+    letter-spacing: .12em; color: var(--ink-secondary);
     margin-bottom: .3rem;
   }
-  h1 { font-size: 1.7rem; font-weight: 750; letter-spacing: -.02em; margin: 0; line-height: 1.1; }
+  h1 { font-size: 1.7rem; font-weight: 600; letter-spacing: -.02em; margin: 0; line-height: 1.1; color: var(--ink); }
 
-  /* neomorphic primitives */
+  /* shared control primitives — flat surface, hairline border */
   .ml button, .saldo summary, .saldo-form button, input, select {
     font-family: inherit;
-    background: var(--bg);
-    color: var(--txt);
-    border: none;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--border);
     outline: none;
   }
   button { cursor: pointer; }
   button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--amber); outline-offset: 2px;
+    outline: 2px solid var(--ink); outline-offset: 2px;
   }
 
-  /* source-actions row */
+  /* source-actions row — pill button family, consistent across all buttons */
   .ml { display: flex; gap: .8rem; margin-bottom: .9rem; flex-wrap: wrap; }
   .ml button {
-    border-radius: 999px; padding: .6rem 1.1rem; font-weight: 650; font-size: .9rem;
-    color: var(--txt);
-    box-shadow: 5px 5px 11px var(--sh-dark), -5px -5px 11px var(--sh-light);
-    transition: box-shadow .18s ease, transform .18s ease, color .18s ease;
+    border-radius: var(--radius-pill); padding: .6rem 1.1rem; font-weight: 500; font-size: .9rem;
+    transition: background-color .18s ease, border-color .18s ease;
   }
-  .ml button::before { content: '↻ '; color: var(--amber); font-weight: 700; }
-  .ml button.fb::before { color: var(--terra); }
-  .ml button:hover { color: #fff; transform: translateY(-1px); }
-  .ml button:active {
-    box-shadow: inset 4px 4px 9px var(--sh-dark), inset -4px -4px 9px var(--sh-light);
-    transform: translateY(0);
-  }
-  .ml-status { font-size: .76rem; color: var(--muted-txt); margin: .15rem 0; }
+  .ml button::before { content: '↻ '; color: currentColor; }
+  .ml button:hover { background: var(--hover-fill); border-color: var(--border-strong); }
+  .ml button:active { background: var(--pressed-fill); }
+  .ml-status { font-size: .76rem; color: var(--ink-secondary); margin: .15rem 0; }
 
-  /* saldo disclosure */
-  .saldo { margin: 1rem 0 1.5rem; font-size: .82rem; color: var(--muted-txt); }
+  /* saldo disclosure — same pill family as the source buttons */
+  .saldo { margin: 1rem 0 1.5rem; font-size: .82rem; color: var(--ink-secondary); }
   .saldo summary {
-    list-style: none; display: inline-block; border-radius: 999px;
-    padding: .5rem .95rem; font-weight: 600; color: var(--txt);
-    box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+    list-style: none; display: inline-block; border-radius: var(--radius-pill);
+    padding: .5rem .95rem; font-weight: 500; color: var(--ink);
+    transition: background-color .18s ease, border-color .18s ease;
   }
+  .saldo summary:hover { background: var(--hover-fill); border-color: var(--border-strong); }
   .saldo summary::-webkit-details-marker { display: none; }
-  .saldo summary::before { content: '◐  '; color: var(--amber); }
+  .saldo summary::before { content: '◐  '; color: currentColor; }
   .saldo[open] summary { margin-bottom: .8rem; }
   .saldo-form { display: flex; flex-wrap: wrap; gap: .6rem; margin: .2rem 0; }
   .saldo-form input { flex: 1 1 8rem; }
   .saldo-form button {
-    border-radius: 12px; padding: .5rem 1rem; font-weight: 650; color: var(--amber);
-    box-shadow: 4px 4px 9px var(--sh-dark), -4px -4px 9px var(--sh-light);
+    border-radius: var(--radius-pill); padding: .5rem 1rem; font-weight: 500;
+    transition: background-color .18s ease, border-color .18s ease;
   }
-  .saldo-form button:active { box-shadow: inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light); }
+  .saldo-form button:hover { background: var(--hover-fill); border-color: var(--border-strong); }
+  .saldo-form button:active { background: var(--pressed-fill); }
 
-  /* controls — inset fields */
+  /* controls */
   .controls { display: flex; flex-wrap: wrap; gap: 1rem 1.1rem; margin-bottom: 1.75rem; }
   label {
     display: flex; flex-direction: column; gap: .4rem;
-    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-txt);
+    font-size: .68rem; letter-spacing: .04em; color: var(--ink-secondary);
   }
-  label.chk { flex-direction: row; align-items: center; gap: .5rem; align-self: end; text-transform: none; letter-spacing: 0; font-size: .82rem; }
+  label.chk { flex-direction: row; align-items: center; gap: .5rem; align-self: end; letter-spacing: 0; font-size: .82rem; }
   input, select {
-    border-radius: 13px; padding: .55rem .7rem; font-size: .9rem; color: var(--txt);
-    box-shadow: inset 4px 4px 8px var(--sh-dark), inset -4px -4px 8px var(--sh-light);
+    border-radius: var(--radius); padding: .55rem .7rem; font-size: .9rem; color: var(--ink);
   }
   input[type='number'] { width: 6.5rem; font-variant-numeric: tabular-nums; }
-  input[type='checkbox'] { width: 1.15rem; height: 1.15rem; accent-color: var(--amber); box-shadow: none; }
+  input[type='checkbox'] { width: 1.15rem; height: 1.15rem; accent-color: var(--ink); border: none; }
   select { appearance: none; }
-  option { background: #241d1a; }
+  option { background: #0a0a0a; }
 
-  /* signature: the affordability meter */
+  /* the affordability meter — flat fill, no glow, label lives below (was
+     centered inside the bar; unreadable once the neomorphic glow that gave
+     it contrast against the fill is gone) */
   .bar {
-    position: relative; height: 40px; border-radius: 999px; overflow: hidden;
-    background: var(--bg); margin-bottom: .7rem;
-    box-shadow: inset 5px 5px 11px var(--sh-dark), inset -5px -5px 11px var(--sh-light);
+    position: relative; height: 32px; border-radius: var(--radius-pill); overflow: hidden;
+    background: var(--canvas); border: 1px solid var(--border); margin-bottom: .5rem;
   }
   .fill {
-    height: 100%; border-radius: 999px;
-    background: linear-gradient(90deg, var(--terra) 0%, var(--amber) 55%, var(--sage) 100%);
-    box-shadow: 0 0 20px -1px var(--amber-glow), inset 0 2px 3px rgba(255, 226, 190, .4);
-    transition: width .45s cubic-bezier(.22, .61, .36, 1);
+    height: 100%; border-radius: var(--radius-pill);
+    background: var(--ink);
+    transition: width .28s ease-out;
   }
   .bar-label {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: .82rem; font-weight: 700; letter-spacing: .01em;
-    color: var(--txt); text-shadow: 0 1px 3px rgba(0, 0, 0, .55); mix-blend-mode: normal;
+    font-size: .8rem; color: var(--ink-secondary); margin: 0 0 1.5rem;
+    font-variant-numeric: tabular-nums;
   }
-  .hint { font-size: .8rem; color: var(--muted-txt); margin: 0 0 1.5rem; }
+  .hint { font-size: .8rem; color: var(--ink-secondary); margin: 0 0 1.5rem; }
 
-  /* wishlist — affordable pops out, the rest sinks in */
+  /* wishlist */
   .list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .7rem; }
   li {
     display: grid; grid-template-columns: 1.6rem 1fr auto; align-items: center;
-    gap: .2rem .8rem; padding: .85rem 1.05rem; border-radius: 16px; background: var(--bg);
-    box-shadow: inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);
-    opacity: .72; transition: opacity .2s ease, transform .2s ease;
+    gap: .2rem .8rem; padding: .85rem 1.05rem; border-radius: var(--radius);
+    border: 1px solid var(--border);
+    transition: border-color .2s ease;
   }
-  li.affordable {
-    opacity: 1;
-    box-shadow: 5px 5px 11px var(--sh-dark), -5px -5px 11px var(--sh-light);
-  }
-  li.affordable:hover { transform: translateY(-2px); }
-  .mark { font-size: 1rem; font-weight: 800; color: var(--muted); grid-row: span 2; }
-  li.affordable .mark { color: var(--sage); }
-  .title { font-weight: 620; }
-  .meta { grid-column: 2; font-size: .72rem; color: var(--muted-txt); }
-  .price { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--amber); grid-row: span 2; }
-  li:not(.affordable) .price { color: var(--muted-txt); }
-  .empty { display: block; text-align: center; color: var(--muted-txt); box-shadow: none; opacity: 1; }
+  li.affordable { border-color: var(--border-strong); }
+  .mark { font-size: 1rem; font-weight: 600; color: var(--ink-tertiary); grid-row: span 2; }
+  li.affordable .mark { color: var(--ink); }
+  .title { font-weight: 500; color: var(--ink-secondary); }
+  li.affordable .title { color: var(--ink); }
+  .meta { grid-column: 2; font-size: .72rem; color: var(--ink-tertiary); }
+  .price { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink-tertiary); grid-row: span 2; }
+  li.affordable .price { color: var(--ink); }
+  .empty { display: block; text-align: center; color: var(--ink-secondary); }
 
-  /* entrance cascade — the panel assembles itself on open */
-  @keyframes rise { from { opacity: 0; transform: translateY(13px); } to { opacity: 1; transform: none; } }
-  .head, .ml, .ml-status, .saldo, .controls, .bar, .hint, .list {
-    animation: rise .5s cubic-bezier(.22, .61, .36, 1) both;
+  /* entrance cascade — kept (state indication that the panel loaded), trimmed
+     under 300ms per the skill's ordinary-motion ceiling */
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .head, .ml, .ml-status, .saldo, .controls, .bar, .bar-label, .hint, .list {
+    animation: rise .28s ease-out both;
   }
-  .head { animation-delay: .02s } .ml { animation-delay: .08s }
-  .saldo { animation-delay: .13s } .controls { animation-delay: .18s }
-  .bar { animation-delay: .24s } .hint { animation-delay: .28s } .list { animation-delay: .32s }
+  .head { animation-delay: .02s } .ml { animation-delay: .06s }
+  .saldo { animation-delay: .1s } .controls { animation-delay: .14s }
+  .bar { animation-delay: .18s } .bar-label { animation-delay: .2s }
+  .hint { animation-delay: .22s } .list { animation-delay: .24s }
 
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after { animation: none !important; transition: none !important; }
