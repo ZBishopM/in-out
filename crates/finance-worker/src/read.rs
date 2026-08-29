@@ -52,6 +52,10 @@ pub struct TxRow {
     pub amount_cents: i64,
     pub currency: String,
     pub merchant: Option<String>,
+    /// What the user wrote from /audit. The dashboard shows this instead of
+    /// `merchant` when it's set: "MP*SOLEPERU" is the card descriptor, not
+    /// what the purchase actually was.
+    pub note: Option<String>,
 }
 
 pub async fn summary(pool: &PgPool, user: Uuid) -> Result<Vec<SummaryRow>> {
@@ -254,23 +258,27 @@ pub async fn audit_discarded(pool: &PgPool, user: Uuid, limit: i64) -> Result<Ve
 }
 
 pub async fn transactions(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<TxRow>> {
-    let rows: Vec<(DateTime<Utc>, String, i64, String, Option<String>)> = sqlx::query_as(
-        r#"select occurred_at, direction, amount_cents, currency, merchant
-           from transactions where user_id = $1
-           order by occurred_at desc limit $2"#,
-    )
-    .bind(user)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(DateTime<Utc>, String, i64, String, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            r#"select occurred_at, direction, amount_cents, currency, merchant, note
+               from transactions where user_id = $1
+               order by occurred_at desc limit $2"#,
+        )
+        .bind(user)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
     Ok(rows
         .into_iter()
-        .map(|(occurred_at, direction, amount_cents, currency, merchant)| TxRow {
-            occurred_at,
-            direction,
-            amount_cents,
-            currency,
-            merchant,
-        })
+        .map(
+            |(occurred_at, direction, amount_cents, currency, merchant, note)| TxRow {
+                occurred_at,
+                direction,
+                amount_cents,
+                currency,
+                merchant,
+                note,
+            },
+        )
         .collect())
 }

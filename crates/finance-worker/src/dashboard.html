@@ -59,6 +59,8 @@
   .acct { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; padding:.65rem 0; border-bottom:1px solid var(--border); gap:.5rem; }
   .acct-main { min-width:0; }
   .acct .n { font-weight:500; color:var(--ink); } .acct .kind { color:var(--ink-secondary); font-size:.75rem; }
+  /* El comercio, cuando la nota le robó el lugar principal. */
+  .tx-src { display:block; color:var(--ink-tertiary); font-size:.7rem; }
   .acct-right { display:flex; align-items:center; gap:.7rem; font-variant-numeric:tabular-nums; font-weight:600; }
   .edit-toggle { background:transparent; color:var(--ink-secondary); border:1px solid var(--border); border-radius:var(--radius-pill); padding:.28rem .7rem; font-size:.7rem; cursor:pointer; transition:background-color .18s ease, border-color .18s ease; }
   .edit-toggle:hover { background:var(--hover-fill); border-color:var(--border-strong); }
@@ -182,6 +184,10 @@ async function postJSON(url, body) {
   return r.json();
 }
 const escAttr = s => String(s).replace(/"/g, '&quot;');
+// Escape completo para texto que se inyecta como HTML. Las notas las escribe
+// el usuario y los nombres de comercio los manda el banco: ninguno de los dos
+// es seguro concatenar crudo.
+const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const curOpts = cur => ['PEN', 'USD'].map(c => `<option ${c === cur ? 'selected' : ''}>${c}</option>`).join('');
 const centsToUnit = c => (c == null ? '' : c / 100);
 
@@ -346,7 +352,14 @@ async function main() {
     document.getElementById('txs').innerHTML = txs.map(t => {
       const d = new Date(t.occurred_at).toLocaleString('es-PE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       const sign = t.direction==='out'?'-':'+';
-      return `<tr><td>${d}</td><td>${t.merchant||'—'}</td>
+      // La nota manda sobre el comercio cuando existe: "MP*SOLEPERU" es el
+      // descriptor de la tarjeta, no lo que se compró. El comercio pasa a
+      // ser el subtítulo, para no perder de dónde salió el cargo.
+      const nota = (t.note || '').trim();
+      const qué = nota
+        ? `${esc(nota)}<span class="tx-src">${esc(t.merchant || '')}</span>`
+        : esc(t.merchant || '—');
+      return `<tr><td>${d}</td><td>${qué}</td>
         <td class="amt ${t.direction}">${sign}${money(t.amount_cents,t.currency)}</td></tr>`;
     }).join('');
 
