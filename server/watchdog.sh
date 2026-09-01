@@ -8,20 +8,56 @@
 # Un solo aviso por transicion (sano->roto, roto->sano), y un recordatorio
 # cada REALERTA_HORAS mientras siga roto -- ni silencio total ni un mensaje
 # por cada corrida de cron.
+#
+# REGLA: solo se avisa de lo que se ha COMPROBADO que esta roto. Nunca de un
+# silencio.
+#
+# Habia dos chequeos que deducian la averia de que no llegaran datos: "sin
+# transacciones hace 3 dias" y "sin ningun correo hace 6h". El segundo salto un
+# martes a las 5 de la mañana y dijo "posible trigger IMAP muerto". No habia
+# nada muerto: no habia compras porque su dueño estaba durmiendo. Ese es el
+# fallo de fondo de medir la salud por el silencio -- no hay umbral en horas
+# que distinga "el trigger se cayo" de "hoy no gastaste", porque el dato que
+# mira es el mismo en los dos casos.
+#
+# Asi que se fueron los dos, y en su lugar hay una comprobacion de verdad: si
+# el trigger IMAP tiene o no un socket abierto contra Gmail. Eso es un hecho
+# observable, vale a las 5 de la mañana igual que a mediodia, y no depende de
+# que hayas comprado algo.
+#
+# Lo que queda, entonces, son dos hechos y ninguna corazonada:
+#   1. un contenedor que no esta corriendo
+#   2. el trigger IMAP sin conexion, confirmado dos veces
+#
+# El precio, dicho claro: un fallo que deje la conexion viva pero deje de
+# guardar (un parser roto, por ejemplo) ya no se detecta aqui. Ese caso toca
+# cazarlo del lado del ingest, donde SI es un evento, en vez de adivinarlo
+# desde fuera contando horas de silencio.
+#
+# Siguiente en caer: el chequeo de contenedores, que
+# "docker events --filter event=die --filter event=health_status" ya entrega
+# como flujo de eventos en vez de como sondeo.
 
 set -euo pipefail
 
 ENV_FILE="/home/bicho/in-out/server/.env"
 STATE_FILE="/home/bicho/in-out/server/.watchdog-state"
-STALE_DIAS=3
-STALE_HORAS_SUAVE=6
 REALERTA_HORAS=12
-IMAP_VENTANA_MIN=20
+# Segundos entre la primera comprobacion del IMAP y la de confirmacion. Un
+# reconecte normal dura segundos; con este margen no se avisa por pillarlo
+# justo en medio.
+CONFIRMAR_TRAS=45
 CONTENEDORES=(server-ingest-api-1 server-n8n-1 server-postgres-1)
 
-webhook=$(grep -E '^DISCORD_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)
+# Canal de errores y caidas, aparte del de consumos (esos los manda ingest-api
+# con DISCORD_WEBHOOK_URL). Con respaldo al de siempre: un .env sin la clave
+# nueva debe mandar al canal equivocado, no dejar al watchdog mudo.
+webhook=$(grep -E '^DISCORD_ALERTS_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)
 if [ -z "$webhook" ]; then
-  echo "sin DISCORD_WEBHOOK_URL en $ENV_FILE" >&2
+  webhook=$(grep -E '^DISCORD_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)
+fi
+if [ -z "$webhook" ]; then
+  echo "sin DISCORD_ALERTS_WEBHOOK_URL ni DISCORD_WEBHOOK_URL en $ENV_FILE" >&2
   exit 1
 fi
 
@@ -45,53 +81,28 @@ for c in "${CONTENEDORES[@]}"; do
   fi
 done
 
-# Solo se consulta postgres si el propio contenedor esta arriba -- si no, ya
-# se sabe que algo esta mal y consultarlo solo daria un segundo error confuso.
+# ¿Tiene el trigger IMAP un socket abierto contra Gmail?
+#
+# Esto es lo que sustituye a los umbrales por tiempo. No se deduce nada: o hay
+# una conexion en el 993 o no la hay. Y como el nodo lleva socketTimeout
+# puesto (ver server/n8n-imap-fix.js), una conexion zombie -- viva en TCP pero
+# muerta por arriba -- se cierra sola en 10 minutos, asi que "hay socket"
+# significa de verdad "el trigger esta escuchando".
+imap_conectado() {
+  docker exec server-n8n-1 sh -c "netstat -tn 2>/dev/null | grep -q ':993 .*ESTABLISHED'"
+}
+
+# Solo se mira si los contenedores estan arriba -- si no, ya se sabe que algo
+# esta mal y esto solo daria un segundo error confuso.
 if [ ${#problemas[@]} -eq 0 ]; then
-  ultima=$(docker exec server-postgres-1 psql -U inout -d inout -tAc \
-    "select coalesce(extract(epoch from now() - max(created_at))::int, -1) from transactions;" 2>/dev/null || echo "")
-  if [ -z "$ultima" ]; then
-    problemas+=("no se pudo consultar la ultima transaccion en postgres")
-  elif [ "$ultima" -lt 0 ]; then
-    problemas+=("la tabla transactions esta vacia")
-  else
-    dias=$((ultima / 86400))
-    if [ "$dias" -ge "$STALE_DIAS" ]; then
-      problemas+=("sin transacciones nuevas hace **$dias dias** (limite $STALE_DIAS) -- revisa el credential de Gmail en n8n")
+  if ! imap_conectado; then
+    # Segunda opinion antes de avisar: el nodo reconecta cada 30 min por su
+    # cuenta, y esa ventana son segundos. Sin esta confirmacion, el cron podria
+    # caer justo dentro y avisar de una caida que no existe.
+    sleep "$CONFIRMAR_TRAS"
+    if ! imap_conectado; then
+      problemas+=("el trigger IMAP no tiene conexion con Gmail -- comprobado dos veces con ${CONFIRMAR_TRAS}s de diferencia")
     fi
-  fi
-
-  # Muerte silenciosa del trigger IMAP, caso 2026-08-28: 22h sin un solo
-  # correo -- ni procesado ni descartado -- y SIN ninguna linea de error en el
-  # log de n8n. El chequeo de arriba (STALE_DIAS) no lo hubiera visto hasta el
-  # dia 3, y el de abajo (el string de error) no aplica porque esta vez no
-  # hubo error: la conexion IMAP simplemente dejo de entregar, en silencio,
-  # incluso con "Force Reconnect Every Minutes" puesto. Este chequeo es la
-  # red que faltaba: umbral en HORAS, no dias, y mira CUALQUIER correo que
-  # haya llegado al ingester (raw_events + discarded_events), no solo
-  # transacciones -- asi una racha sin gastar pero con correos no-monetarios
-  # (OTP, estados de cuenta) no da una falsa alarma, y una racha sin ESE tipo
-  # de correo tampoco se disfraza de "no gastaste nada hoy".
-  ultimo_correo=$(docker exec server-postgres-1 psql -U inout -d inout -tAc \
-    "select coalesce(extract(epoch from now() - greatest(
-        (select max(received_at) from raw_events),
-        (select max(received_at) from discarded_events)
-      ))::int, -1);" 2>/dev/null || echo "")
-  if [ -n "$ultimo_correo" ] && [ "$ultimo_correo" -ge 0 ]; then
-    horas=$((ultimo_correo / 3600))
-    if [ "$horas" -ge "$STALE_HORAS_SUAVE" ]; then
-      problemas+=("sin NINGUN correo (procesado o descartado) hace **${horas}h** (limite ${STALE_HORAS_SUAVE}h) -- posible trigger IMAP muerto en silencio, sin error en el log")
-    fi
-  fi
-
-  # El trigger IMAP de n8n (conexion IDLE) se murio en silencio una vez
-  # (2026-08-26): un solo error en el log y despues nada por horas, sin
-  # reintentar solo. Se le puso "Force Reconnect Every Minutes"=30 como
-  # auto-cura, pero esto avisa mas rapido que esperar $STALE_DIAS por si
-  # ese seguro tampoco alcanza.
-  if docker logs server-n8n-1 --since "${IMAP_VENTANA_MIN}m" 2>&1 \
-       | grep -q "Email Read Imap node encountered an error fetching new emails"; then
-    problemas+=("el trigger IMAP tiro un error en los ultimos ${IMAP_VENTANA_MIN} min -- si no se auto-cura (forceReconnect), reiniciar n8n")
   fi
 fi
 
