@@ -67,6 +67,11 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:?set in .env}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:?set in .env}
+      # Canal de Discord SOLO para errores y caidas, separado del de consumos
+      # (ese lo manda ingest-api con DISCORD_WEBHOOK_URL). El workflow "Error
+      # Alerts" lo lee como {{ $env.DISCORD_ALERTS_WEBHOOK_URL }} en vez de
+      # llevar la URL incrustada en el nodo: el repo es publico.
+      - DISCORD_ALERTS_WEBHOOK_URL=${DISCORD_ALERTS_WEBHOOK_URL:-}
     # Bind to localhost only; your reverse proxy forwards the public domain here.
     # If 5678 is also taken on the host, change the left side (e.g. 5679:5678).
     ports:

@@ -1,0 +1,74 @@
+{
+  "name": "Error Alerts",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "et-error-trigger-0001",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convierte lo que entrega el Error Trigger en un mensaje corto para Discord.\n// Dos formas segun de donde venga el fallo:\n//   $json.trigger   -> murio el trigger del workflow (p.ej. la conexion IMAP)\n//   $json.execution -> fallo un nodo durante una ejecucion\n//\n// Sin literales multilinea a proposito: el unico salto de linea es el join de\n// abajo. Este nodo estuvo 14 ejecuciones seguidas sin compilar porque un '\\n'\n// quedo guardado como salto de linea REAL dentro de comillas simples, y nadie\n// se entero porque lo roto era justamente el aviso de errores.\n// compilan.test.mjs existe por esto.\nconst wf = $json.workflow || {};\nconst lineas = [`🔴 **n8n: error en \"${wf.name || '?'}\"**`];\n\nif ($json.trigger) {\n  const t = $json.trigger;\n  lineas.push(`Trigger: ${t.error?.node?.name || '?'}`);\n  lineas.push(t.error?.message || t.error?.name || 'error sin mensaje');\n} else {\n  const e = $json.execution || {};\n  lineas.push(`Nodo: ${e.lastNodeExecuted || '?'}`);\n  lineas.push(e.error?.message || 'error sin mensaje');\n  if (e.url) lineas.push(e.url);\n}\n\nreturn [{ json: { content: lineas.join('\\n') } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "et-build-message-0002",
+      "name": "Build message"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_ALERTS_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"content\": $json.content } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        0
+      ],
+      "id": "et-post-discord-0003",
+      "name": "POST Discord"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "POST Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
