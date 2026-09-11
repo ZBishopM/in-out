@@ -48,13 +48,23 @@ publicar() {   # publicar <archivo.json> <nombre actual en la base>
     return
   fi
 
-  # El id va inyectado en una COPIA temporal; el fichero del repo no se toca.
-  tmp="$(mktemp)"
-  jq --arg id "$id" '. + {id: $id}' "$archivo" > "$tmp"
-  docker compose cp "$tmp" n8n:/tmp/publicar.json
+  # El id se inyecta en una COPIA dentro del contenedor; el fichero del repo no
+  # se toca.
+  #
+  # El JSON lo edita el NODE DEL PROPIO CONTENEDOR, no `jq` del host. n8n es una
+  # aplicación de node, así que ese intérprete está garantizado ahí dentro;
+  # `jq` resultó no estar instalado en agapornis, y pedir un paquete del sistema
+  # para reescribir un campo de un JSON es una dependencia que no hace falta.
+  docker compose cp "$archivo" n8n:/tmp/publicar.json
+  docker compose exec -T n8n node -e '
+    const fs = require("fs");
+    const f = "/tmp/publicar.json";
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    j.id = process.argv[1];
+    fs.writeFileSync(f, JSON.stringify(j));
+  ' "$id"
   docker compose exec -T n8n n8n import:workflow --input=/tmp/publicar.json
   docker compose exec -T n8n rm -f /tmp/publicar.json
-  rm -f "$tmp"
   echo "     importado"
 }
 
