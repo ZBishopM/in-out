@@ -21,7 +21,7 @@ Poll every few minutes. Restrict to the transactional senders (see
 ```
 from:(service@intl.paypal.com OR notificaciones@notificacionesbcp.com.pe OR
       servicioalcliente@netinterbank.com.pe OR no-reply@operaciones.agora.pe OR
-      bancadigital@scotiabank.com.pe)
+      bancadigital@scotiabank.com.pe OR no-reply@servicioalcliente.sip.pe)
 ```
 
 Enable "Download" so the node returns the message body.

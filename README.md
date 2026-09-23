@@ -20,8 +20,7 @@ server/        Docker Compose (Postgres + n8n) + Supabase migrations
 
 ## Prerequisites
 
-- **Rust** (stable) — not yet installed on this machine. Get it from
-  <https://rustup.rs>.
+- **Rust** (stable) — <https://rustup.rs>.
 - **Tauri CLI**: `cargo install tauri-cli --version "^2.0"`
 - Node ≥ 20 + pnpm (present), Docker (present).
 
@@ -62,8 +61,9 @@ pnpm --dir apps/ui dev   # http://localhost:5173
   - `finance-worker` reconciles raw events into deduplicated transactions +
     account balances, and exposes an `ingest-api` HTTP service (n8n POSTs Gmail
     messages → parse → `raw_events` → reconcile; deduped by message id).
-  - **Pending (needs the server):** deploy the stack on agapornis and wire the
-    n8n Gmail workflow (see [server/n8n/README.md](server/n8n/README.md)).
+  - **Live on agapornis** (containers `server-postgres-1`, `server-n8n-1`,
+    `server-ingest-api-1`). n8n reads the bank mail over IMAP (the Gmail OAuth
+    trigger expired and was replaced); see [server/n8n/README.md](server/n8n/README.md).
 - **F3 (dashboard)** — `ingest-api` also serves a web dashboard at `/` plus a
   read API (`/api/summary|daily|hourly|accounts|transactions`). Spend by day/hour,
   account balances, recent transactions. Verified locally. Deploy: a reverse-proxy
