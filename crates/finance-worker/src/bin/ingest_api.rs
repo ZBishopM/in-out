@@ -151,22 +151,16 @@ fn default_days() -> i32 {
     30
 }
 
+/// Ventana de historial para /api/transactions y /api/audit/*. Por días y no
+/// por filas: con un límite de filas, lo que alcanza a verse depende de cuánto
+/// gastaste, no de cuánto tiempo. 0 = todo.
 #[derive(Deserialize)]
-struct LimitQ {
-    #[serde(default = "default_limit")]
-    limit: i64,
+struct HistoryQ {
+    #[serde(default = "default_history_days")]
+    days: i32,
 }
-fn default_limit() -> i64 {
-    50
-}
-
-#[derive(Deserialize)]
-struct AuditLimitQ {
-    #[serde(default = "default_audit_limit")]
-    limit: i64,
-}
-fn default_audit_limit() -> i64 {
-    300
+fn default_history_days() -> i32 {
+    92
 }
 
 async fn api_summary(State(st): State<Arc<AppState>>) -> Result<Json<Vec<read::SummaryRow>>, ApiErr> {
@@ -259,22 +253,22 @@ async fn api_delete_account(
     read::accounts(&st.pool, user).await.map(Json).map_err(err500)
 }
 
-async fn api_transactions(State(st): State<Arc<AppState>>, Query(q): Query<LimitQ>) -> Result<Json<Vec<read::TxRow>>, ApiErr> {
-    read::transactions(&st.pool, user_id(), q.limit.clamp(1, 500)).await.map(Json).map_err(err500)
+async fn api_transactions(State(st): State<Arc<AppState>>, Query(q): Query<HistoryQ>) -> Result<Json<Vec<read::TxRow>>, ApiErr> {
+    read::transactions(&st.pool, user_id(), q.days).await.map(Json).map_err(err500)
 }
 
 async fn api_audit_parsed(
     State(st): State<Arc<AppState>>,
-    Query(q): Query<AuditLimitQ>,
+    Query(q): Query<HistoryQ>,
 ) -> Result<Json<Vec<read::ParsedEventRow>>, ApiErr> {
-    read::audit_parsed(&st.pool, user_id(), q.limit.clamp(1, 2000)).await.map(Json).map_err(err500)
+    read::audit_parsed(&st.pool, user_id(), q.days).await.map(Json).map_err(err500)
 }
 
 async fn api_audit_discarded(
     State(st): State<Arc<AppState>>,
-    Query(q): Query<AuditLimitQ>,
+    Query(q): Query<HistoryQ>,
 ) -> Result<Json<Vec<read::DiscardedEventRow>>, ApiErr> {
-    read::audit_discarded(&st.pool, user_id(), q.limit.clamp(1, 2000)).await.map(Json).map_err(err500)
+    read::audit_discarded(&st.pool, user_id(), q.days).await.map(Json).map_err(err500)
 }
 
 #[derive(Deserialize)]

@@ -2,6 +2,10 @@
 FROM rust:1-bookworm AS build
 WORKDIR /app
 COPY . .
+# Un solo job por defecto: agapornis no tiene swap y comparte RAM con el
+# correo y Postgres. Más jobs: --build-arg CARGO_BUILD_JOBS=2.
+ARG CARGO_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN cargo build --release -p finance-worker --bins
 
 FROM debian:bookworm-slim

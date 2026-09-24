@@ -47,6 +47,8 @@ pub struct AccountRow {
 
 #[derive(Serialize)]
 pub struct TxRow {
+    /// Lo que el dashboard pasa a /audit?tx= para saltar a sus correos.
+    pub id: Uuid,
     pub occurred_at: DateTime<Utc>,
     pub direction: String,
     pub amount_cents: i64,
@@ -180,7 +182,8 @@ pub struct DiscardedEventRow {
     pub gmail_msg_id: String,
 }
 
-pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<ParsedEventRow>> {
+/// `days` = ventana hacia atrás desde ahora; 0 o menos = todo el historial.
+pub async fn audit_parsed(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<ParsedEventRow>> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         DateTime<Utc>,
@@ -202,11 +205,11 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<P
            left join transaction_links l on l.raw_event_id = r.id
            left join transactions t on t.id = l.transaction_id
            where r.user_id = $1
-           order by r.received_at desc
-           limit $2"#,
+             and ($2 <= 0 or r.received_at >= now() - make_interval(days => $2))
+           order by r.received_at desc"#,
     )
     .bind(user)
-    .bind(limit)
+    .bind(days)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -241,14 +244,16 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<P
         .collect())
 }
 
-pub async fn audit_discarded(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<DiscardedEventRow>> {
+pub async fn audit_discarded(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<DiscardedEventRow>> {
     let rows: Vec<(DateTime<Utc>, String, Option<String>, String)> = sqlx::query_as(
         r#"select received_at, sender, subject, gmail_msg_id
-           from discarded_events where user_id = $1
-           order by received_at desc limit $2"#,
+           from discarded_events
+           where user_id = $1
+             and ($2 <= 0 or received_at >= now() - make_interval(days => $2))
+           order by received_at desc"#,
     )
     .bind(user)
-    .bind(limit)
+    .bind(days)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -257,21 +262,26 @@ pub async fn audit_discarded(pool: &PgPool, user: Uuid, limit: i64) -> Result<Ve
         .collect())
 }
 
-pub async fn transactions(pool: &PgPool, user: Uuid, limit: i64) -> Result<Vec<TxRow>> {
-    let rows: Vec<(DateTime<Utc>, String, i64, String, Option<String>, Option<String>)> =
+/// `days` = ventana hacia atrás desde ahora; 0 o menos = todo el historial.
+pub async fn transactions(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<TxRow>> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(Uuid, DateTime<Utc>, String, i64, String, Option<String>, Option<String>)> =
         sqlx::query_as(
-            r#"select occurred_at, direction, amount_cents, currency, merchant, note
-               from transactions where user_id = $1
-               order by occurred_at desc limit $2"#,
+            r#"select id, occurred_at, direction, amount_cents, currency, merchant, note
+               from transactions
+               where user_id = $1
+                 and ($2 <= 0 or occurred_at >= now() - make_interval(days => $2))
+               order by occurred_at desc"#,
         )
         .bind(user)
-        .bind(limit)
+        .bind(days)
         .fetch_all(pool)
         .await?;
     Ok(rows
         .into_iter()
         .map(
-            |(occurred_at, direction, amount_cents, currency, merchant, note)| TxRow {
+            |(id, occurred_at, direction, amount_cents, currency, merchant, note)| TxRow {
+                id,
                 occurred_at,
                 direction,
                 amount_cents,

@@ -50,6 +50,13 @@
   td.amt { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
   .amt.out { color:var(--out); } .amt.in { color:var(--in); }
 
+  .tx-bar { display:flex; align-items:center; gap:.8rem; margin-bottom:.6rem; }
+  .tx-bar select { background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem .5rem; font-size:.78rem; }
+  .tx-scroll { max-height:60vh; overflow-y:auto; }
+  .tx-scroll th { position:sticky; top:0; background:var(--panel); }
+  a.aud { color:var(--ink-secondary); text-decoration:none; font-size:.75rem; white-space:nowrap; border-bottom:1px dotted var(--border-strong); }
+  a.aud:hover { color:var(--ink); }
+
   .catrow { display:grid; grid-template-columns:120px 1fr auto; align-items:center; gap:.7rem; padding:.4rem 0; }
   .catrow .cn { font-size:.85rem; color:var(--ink-secondary); }
   .catrow .track { display:block; background:transparent; border:1px solid var(--border); border-radius:999px; height:15px; overflow:hidden; }
@@ -167,9 +174,18 @@
   </section>
 
   <section>
-    <h2>Últimas transacciones</h2>
-    <table><thead><tr><th>Fecha</th><th>Comercio</th><th style="text-align:right">Monto</th></tr></thead>
-    <tbody id="txs"></tbody></table>
+    <h2>Transacciones</h2>
+    <div class="tx-bar">
+      <select id="tx-days" aria-label="rango">
+        <option value="92">últimos 3 meses</option><option value="183">6 meses</option>
+        <option value="365">1 año</option><option value="0">todo</option>
+      </select>
+      <span class="kind" id="tx-count"></span>
+    </div>
+    <div class="tx-scroll">
+      <table><thead><tr><th>Fecha</th><th>Comercio</th><th style="text-align:right">Monto</th><th></th></tr></thead>
+      <tbody id="txs"></tbody></table>
+    </div>
   </section>
 </div>
 
@@ -316,7 +332,7 @@ async function main() {
   try {
     const [summary, daily, hourly, cats, accounts, txs] = await Promise.all([
       get('/api/summary'), get('/api/daily?days=30'), get('/api/hourly'),
-      get('/api/by_category'), get('/api/accounts'), get('/api/transactions?limit=25'),
+      get('/api/by_category'), get('/api/accounts'), get('/api/transactions?days=' + txDays()),
     ]);
 
     const find = (c,d) => (summary.find(s=>s.currency===c&&s.direction===d)||{}).total_cents||0;
@@ -349,19 +365,13 @@ async function main() {
     renderAccounts(accounts);
     wireAddAccount();
 
-    document.getElementById('txs').innerHTML = txs.map(t => {
-      const d = new Date(t.occurred_at).toLocaleString('es-PE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-      const sign = t.direction==='out'?'-':'+';
-      // La nota manda sobre el comercio cuando existe: "MP*SOLEPERU" es el
-      // descriptor de la tarjeta, no lo que se compró. El comercio pasa a
-      // ser el subtítulo, para no perder de dónde salió el cargo.
-      const nota = (t.note || '').trim();
-      const qué = nota
-        ? `${esc(nota)}<span class="tx-src">${esc(t.merchant || '')}</span>`
-        : esc(t.merchant || '—');
-      return `<tr><td>${d}</td><td>${qué}</td>
-        <td class="amt ${t.direction}">${sign}${money(t.amount_cents,t.currency)}</td></tr>`;
-    }).join('');
+    renderTxs(txs);
+    const sel = document.getElementById('tx-days');
+    sel.value = String(txDays());
+    sel.onchange = async () => {
+      const u = new URL(location.href); u.searchParams.set('days', sel.value); history.replaceState(null, '', u);
+      renderTxs(await get('/api/transactions?days=' + txDays()));
+    };
 
     document.getElementById('sub').textContent = `${txs.length ? 'actualizado' : 'sin datos'} · ${new Date().toLocaleString('es-PE')}`;
     makeCollapsible();
@@ -369,6 +379,32 @@ async function main() {
     document.getElementById('sub').innerHTML = `<span class="err">error: ${e.message}</span>`;
   }
 }
+// Ventana del historial: ?days= en la URL, 92 (3 meses) por defecto, 0 = todo.
+function txDays() {
+  const d = parseInt(new URL(location.href).searchParams.get('days') ?? '92', 10);
+  return Number.isFinite(d) && d >= 0 ? d : 92;
+}
+
+function renderTxs(txs) {
+  const days = txDays();
+  document.getElementById('tx-count').textContent = `${txs.length} movimientos`;
+  document.getElementById('txs').innerHTML = txs.map(t => {
+    const d = new Date(t.occurred_at).toLocaleString('es-PE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const sign = t.direction==='out'?'-':'+';
+    // La nota manda sobre el comercio cuando existe: "MP*SOLEPERU" es el
+    // descriptor de la tarjeta, no lo que se compró. El comercio pasa a
+    // ser el subtítulo, para no perder de dónde salió el cargo.
+    const nota = (t.note || '').trim();
+    const qué = nota
+      ? `${esc(nota)}<span class="tx-src">${esc(t.merchant || '')}</span>`
+      : esc(t.merchant || '—');
+    const aud = `/audit?days=${days}&tx=${encodeURIComponent(t.id)}`;
+    return `<tr><td>${d}</td><td>${qué}</td>
+      <td class="amt ${t.direction}">${sign}${money(t.amount_cents,t.currency)}</td>
+      <td><a class="aud" href="${aud}" title="ver el correo y editar la nota">audit ↗</a></td></tr>`;
+  }).join('');
+}
+
 function initTooltip() {
   const tip = document.createElement('div');
   tip.id = 'tip';

@@ -51,6 +51,9 @@
   .note-input:focus-visible { outline:none; border-color:var(--border-strong); }
   .note-input.saved { border-color:var(--in); }
   .note-input.err { border-color:var(--out); }
+  select { color-scheme:dark; background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem .5rem; font-size:.78rem; }
+  tr.focus td { background:rgb(255 255 255 / 12%); }
+  tr.focus td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
   * { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 18%) transparent; }
 </style>
 </head>
@@ -58,6 +61,10 @@
 <div class="wrap">
   <h1>Auditoría de correos</h1>
   <p class="sub">Cada correo bancario que llegó al ingest: en qué transacción terminó, o por qué se descartó. La nota se guarda al salir del campo (o Enter). <a href="/">← volver al dashboard</a></p>
+  <p class="sub"><select id="days" aria-label="rango">
+    <option value="92">últimos 3 meses</option><option value="183">6 meses</option>
+    <option value="365">1 año</option><option value="0">todo</option>
+  </select></p>
 
   <div class="tiles">
     <div class="tile"><div class="k">CORREOS PARSEADOS</div><div class="v" id="t-parsed">—</div></div>
@@ -101,6 +108,12 @@ const fmtDate = iso => new Date(iso).toLocaleString('es-PE', { dateStyle: 'mediu
 const fmtAmt = (cents, currency) => (currency === 'USD' ? '$' : 'S/') + ' ' + (cents / 100).toFixed(2);
 const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// ?days= (92 por defecto, 0 = todo) y ?tx= (la transacción que se abrió desde
+// el dashboard: sus correos se resaltan y se hace scroll hasta el primero).
+const params = new URL(location.href).searchParams;
+const DAYS = (d => Number.isFinite(d) && d >= 0 ? d : 92)(parseInt(params.get('days') ?? '92', 10));
+const FOCUS_TX = params.get('tx');
+
 function gmailLink(gmailMsgId) {
   if (!gmailMsgId) return '';
   const bare = gmailMsgId.replace(/^<|>$/g, '');
@@ -125,7 +138,7 @@ async function saveNote(input) {
 }
 
 async function loadParsed() {
-  const rows = await fetch('/api/audit/parsed?limit=2000').then(r => r.json());
+  const rows = await fetch('/api/audit/parsed?days=' + DAYS).then(r => r.json());
   document.getElementById('t-parsed').textContent = rows.length;
   document.getElementById('t-unlinked').textContent = rows.filter(r => !r.transaction_id).length;
   const tbody = document.querySelector('#tbl-parsed tbody');
@@ -134,7 +147,7 @@ async function loadParsed() {
     const shown = rows.filter(r => !f || [r.sender, r.subject, r.merchant_raw, r.source, r.note]
       .some(x => (x || '').toLowerCase().includes(f)));
     tbody.innerHTML = shown.map(r => `
-      <tr>
+      <tr${FOCUS_TX && r.transaction_id === FOCUS_TX ? ' class="focus"' : ''}>
         <td>${fmtDate(r.received_at)}</td>
         <td>${esc(r.sender) || '<span class="empty">—</span>'}</td>
         <td>${esc(r.subject) || '<span class="empty">—</span>'}</td>
@@ -154,10 +167,15 @@ async function loadParsed() {
   };
   render('');
   document.getElementById('f-parsed').addEventListener('input', e => render(e.target.value));
+  const focus = tbody.querySelector('tr.focus');
+  if (focus) {
+    focus.scrollIntoView({ block: 'center' });
+    focus.querySelector('.note-input')?.focus({ preventScroll: true });
+  }
 }
 
 async function loadDiscarded() {
-  const rows = await fetch('/api/audit/discarded?limit=2000').then(r => r.json());
+  const rows = await fetch('/api/audit/discarded?days=' + DAYS).then(r => r.json());
   document.getElementById('t-discarded').textContent = rows.length;
   const tbody = document.querySelector('#tbl-discarded tbody');
   const render = filter => {
@@ -175,6 +193,13 @@ async function loadDiscarded() {
   render('');
   document.getElementById('f-discarded').addEventListener('input', e => render(e.target.value));
 }
+
+const sel = document.getElementById('days');
+sel.value = String(DAYS);
+sel.onchange = () => {
+  const u = new URL(location.href); u.searchParams.set('days', sel.value); u.searchParams.delete('tx');
+  location.href = u;
+};
 
 loadParsed();
 loadDiscarded();
