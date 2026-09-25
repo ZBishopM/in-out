@@ -58,6 +58,8 @@ pub struct TxRow {
     /// `merchant` when it's set: "MP*SOLEPERU" is the card descriptor, not
     /// what the purchase actually was.
     pub note: Option<String>,
+    /// Marcado en /audit como pago que se puede dividir.
+    pub splittable: bool,
 }
 
 pub async fn summary(pool: &PgPool, user: Uuid) -> Result<Vec<SummaryRow>> {
@@ -170,6 +172,8 @@ pub struct ParsedEventRow {
     /// means there's nothing to attach a note to yet.
     pub transaction_id: Option<Uuid>,
     pub note: Option<String>,
+    /// `None` si el correo no está vinculado a una transacción.
+    pub splittable: Option<bool>,
 }
 
 /// One email the parser returned `None` for — the audit view's "discarded"
@@ -197,10 +201,11 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<Pa
         Option<String>,
         Option<Uuid>,
         Option<String>,
+        Option<bool>,
     )> = sqlx::query_as(
         r#"select r.received_at, r.sender, r.subject, r.gmail_msg_id, r.source,
                   r.amount_cents, r.currency, r.direction, r.merchant_raw,
-                  t.id as transaction_id, t.note
+                  t.id as transaction_id, t.note, t.splittable
            from raw_events r
            left join transaction_links l on l.raw_event_id = r.id
            left join transactions t on t.id = l.transaction_id
@@ -227,6 +232,7 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<Pa
                 merchant_raw,
                 transaction_id,
                 note,
+                splittable,
             )| ParsedEventRow {
                 received_at,
                 sender,
@@ -239,6 +245,7 @@ pub async fn audit_parsed(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<Pa
                 merchant_raw,
                 transaction_id,
                 note,
+                splittable,
             },
         )
         .collect())
@@ -265,9 +272,9 @@ pub async fn audit_discarded(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec
 /// `days` = ventana hacia atrás desde ahora; 0 o menos = todo el historial.
 pub async fn transactions(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<TxRow>> {
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(Uuid, DateTime<Utc>, String, i64, String, Option<String>, Option<String>)> =
+    let rows: Vec<(Uuid, DateTime<Utc>, String, i64, String, Option<String>, Option<String>, bool)> =
         sqlx::query_as(
-            r#"select id, occurred_at, direction, amount_cents, currency, merchant, note
+            r#"select id, occurred_at, direction, amount_cents, currency, merchant, note, splittable
                from transactions
                where user_id = $1
                  and ($2 <= 0 or occurred_at >= now() - make_interval(days => $2))
@@ -280,7 +287,7 @@ pub async fn transactions(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<Tx
     Ok(rows
         .into_iter()
         .map(
-            |(id, occurred_at, direction, amount_cents, currency, merchant, note)| TxRow {
+            |(id, occurred_at, direction, amount_cents, currency, merchant, note, splittable)| TxRow {
                 id,
                 occurred_at,
                 direction,
@@ -288,6 +295,7 @@ pub async fn transactions(pool: &PgPool, user: Uuid, days: i32) -> Result<Vec<Tx
                 currency,
                 merchant,
                 note,
+                splittable,
             },
         )
         .collect())

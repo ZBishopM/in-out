@@ -54,6 +54,8 @@
   .tx-bar select { background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem .5rem; font-size:.78rem; }
   .tx-scroll { max-height:60vh; overflow-y:auto; }
   .tx-scroll th { position:sticky; top:0; background:var(--panel); }
+  .split-chip { display:inline-block; margin-left:.35rem; padding:.05rem .45rem; border-radius:var(--radius-pill);
+    font-size:.66rem; color:var(--in); border:1px solid rgb(122 214 148 / 40%); white-space:nowrap; vertical-align:middle; }
   a.aud { color:var(--ink-secondary); text-decoration:none; font-size:.75rem; white-space:nowrap; border-bottom:1px dotted var(--border-strong); }
   a.aud:hover { color:var(--ink); }
 
@@ -399,7 +401,8 @@ function renderTxs(txs) {
       ? `${esc(nota)}<span class="tx-src">${esc(t.merchant || '')}</span>`
       : esc(t.merchant || '—');
     const aud = `/audit?days=${days}&tx=${encodeURIComponent(t.id)}`;
-    return `<tr><td>${d}</td><td>${qué}</td>
+    const split = t.splittable ? ' <span class="split-chip" title="marcado como divisible en /audit">÷ divisible</span>' : '';
+    return `<tr><td>${d}</td><td>${qué}${split}</td>
       <td class="amt ${t.direction}">${sign}${money(t.amount_cents,t.currency)}</td>
       <td><a class="aud" href="${aud}" title="ver el correo y editar la nota">audit ↗</a></td></tr>`;
   }).join('');

@@ -67,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/audit/parsed", get(api_audit_parsed))
         .route("/api/audit/discarded", get(api_audit_discarded))
         .route("/api/audit/note", post(api_set_note))
+        .route("/api/audit/splittable", post(api_set_splittable))
         .route("/ingest", post(ingest_handler))
         .with_state(state);
 
@@ -280,5 +281,19 @@ struct SetNoteReq {
 async fn api_set_note(State(st): State<Arc<AppState>>, Json(b): Json<SetNoteReq>) -> Result<StatusCode, ApiErr> {
     let note = b.note.as_deref().map(str::trim).filter(|s| !s.is_empty());
     db::set_transaction_note(&st.pool, user_id(), b.transaction_id, note).await.map_err(err500)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct SetSplittableReq {
+    transaction_id: uuid::Uuid,
+    splittable: bool,
+}
+
+async fn api_set_splittable(
+    State(st): State<Arc<AppState>>,
+    Json(b): Json<SetSplittableReq>,
+) -> Result<StatusCode, ApiErr> {
+    db::set_transaction_splittable(&st.pool, user_id(), b.transaction_id, b.splittable).await.map_err(err500)?;
     Ok(StatusCode::NO_CONTENT)
 }

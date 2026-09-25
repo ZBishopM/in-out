@@ -51,6 +51,19 @@
   .note-input:focus-visible { outline:none; border-color:var(--border-strong); }
   .note-input.saved { border-color:var(--in); }
   .note-input.err { border-color:var(--out); }
+  /* Interruptor "divisible": checkbox nativo con forma de switch (teclado y
+     lector de pantalla gratis). */
+  .switch { appearance:none; -webkit-appearance:none; width:30px; height:17px; border-radius:var(--radius-pill);
+    background:var(--border-strong); position:relative; cursor:pointer; vertical-align:middle; margin:0;
+    transition:background-color .15s ease; }
+  .switch::after { content:''; position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%;
+    background:var(--ink); transition:transform .15s ease; }
+  .switch:checked { background:var(--in); }
+  .switch:checked::after { transform:translateX(13px); }
+  .switch:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+  .switch.err { box-shadow:0 0 0 2px var(--out); }
+  .only-split { display:flex; align-items:center; gap:.4rem; font-size:.75rem; color:var(--ink-secondary); cursor:pointer; }
+  .sec-tools { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; }
   select { color-scheme:dark; background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem .5rem; font-size:.78rem; }
   tr.focus td { background:rgb(255 255 255 / 12%); }
   tr.focus td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
@@ -70,17 +83,21 @@
     <div class="tile"><div class="k">CORREOS PARSEADOS</div><div class="v" id="t-parsed">—</div></div>
     <div class="tile"><div class="k">DESCARTADOS</div><div class="v warn" id="t-discarded">—</div></div>
     <div class="tile"><div class="k">SIN VINCULAR A TRANSACCIÓN</div><div class="v out" id="t-unlinked">—</div></div>
+    <div class="tile"><div class="k">DIVISIBLES</div><div class="v" id="t-split">—</div></div>
   </div>
 
   <section>
     <div class="sec-head">
       <h2>PARSEADOS — se convirtieron en un movimiento</h2>
-      <input type="search" id="f-parsed" placeholder="filtrar por remitente, asunto, comercio...">
+      <div class="sec-tools">
+        <label class="only-split"><input type="checkbox" class="switch" id="f-split"> solo divisibles</label>
+        <input type="search" id="f-parsed" placeholder="filtrar por remitente, asunto, comercio...">
+      </div>
     </div>
     <div class="tbl-scroll">
       <table id="tbl-parsed">
         <thead><tr>
-          <th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Fuente</th><th>Comercio</th><th>Monto</th><th>Nota</th><th>Correo</th>
+          <th>Fecha</th><th>Remitente</th><th>Asunto</th><th>Fuente</th><th>Comercio</th><th>Monto</th><th>Nota</th><th title="pago que se puede dividir">Divisible</th><th>Correo</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -141,11 +158,41 @@ async function loadParsed() {
   const rows = await fetch('/api/audit/parsed?days=' + DAYS).then(r => r.json());
   document.getElementById('t-parsed').textContent = rows.length;
   document.getElementById('t-unlinked').textContent = rows.filter(r => !r.transaction_id).length;
+  // Una transacción puede venir de varios correos: se cuenta una vez.
+  const countSplit = () => {
+    document.getElementById('t-split').textContent =
+      new Set(rows.filter(r => r.splittable).map(r => r.transaction_id)).size;
+  };
+  countSplit();
   const tbody = document.querySelector('#tbl-parsed tbody');
-  const render = filter => {
-    const f = filter.trim().toLowerCase();
-    const shown = rows.filter(r => !f || [r.sender, r.subject, r.merchant_raw, r.source, r.note]
-      .some(x => (x || '').toLowerCase().includes(f)));
+  const search = document.getElementById('f-parsed');
+  const onlySplit = document.getElementById('f-split');
+
+  async function saveSplit(input) {
+    const txId = input.dataset.tx, value = input.checked;
+    input.classList.remove('err');
+    try {
+      const res = await fetch('/api/audit/splittable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_id: txId, splittable: value }),
+      });
+      if (!res.ok) throw new Error(res.status);
+      // El resto de filas de la misma transacción cambian con esta.
+      rows.forEach(r => { if (r.transaction_id === txId) r.splittable = value; });
+      tbody.querySelectorAll(`.switch[data-tx="${txId}"]`).forEach(s => { s.checked = value; });
+      countSplit();
+    } catch {
+      input.checked = !value;
+      input.classList.add('err');
+    }
+  }
+
+  const render = () => {
+    const f = search.value.trim().toLowerCase();
+    const shown = rows.filter(r => (!onlySplit.checked || r.splittable) &&
+      (!f || [r.sender, r.subject, r.merchant_raw, r.source, r.note]
+        .some(x => (x || '').toLowerCase().includes(f))));
     tbody.innerHTML = shown.map(r => `
       <tr${FOCUS_TX && r.transaction_id === FOCUS_TX ? ' class="focus"' : ''}>
         <td>${fmtDate(r.received_at)}</td>
@@ -157,6 +204,9 @@ async function loadParsed() {
         <td>${r.transaction_id
           ? `<input class="note-input" data-tx="${r.transaction_id}" value="${esc(r.note)}" placeholder="anotar...">`
           : '<span class="flag">sin vincular</span>'}</td>
+        <td>${r.transaction_id
+          ? `<input type="checkbox" class="switch" data-tx="${r.transaction_id}" aria-label="divisible"${r.splittable ? ' checked' : ''}>`
+          : ''}</td>
         <td>${gmailLink(r.gmail_msg_id)}</td>
       </tr>`).join('');
     document.getElementById('empty-parsed').hidden = shown.length > 0;
@@ -164,9 +214,11 @@ async function loadParsed() {
       input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
       input.addEventListener('blur', () => saveNote(input));
     });
+    tbody.querySelectorAll('.switch').forEach(s => s.addEventListener('change', () => saveSplit(s)));
   };
-  render('');
-  document.getElementById('f-parsed').addEventListener('input', e => render(e.target.value));
+  render();
+  search.addEventListener('input', render);
+  onlySplit.addEventListener('change', render);
   const focus = tbody.querySelector('tr.focus');
   if (focus) {
     focus.scrollIntoView({ block: 'center' });

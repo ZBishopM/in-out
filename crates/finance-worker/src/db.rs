@@ -215,6 +215,17 @@ pub async fn set_transaction_note(pool: &PgPool, user: Uuid, id: Uuid, note: Opt
     Ok(())
 }
 
+/// Mark (or unmark) a transaction as splittable — set from /audit.
+pub async fn set_transaction_splittable(pool: &PgPool, user: Uuid, id: Uuid, splittable: bool) -> Result<()> {
+    sqlx::query("update transactions set splittable = $1 where id = $2 and user_id = $3")
+        .bind(splittable)
+        .bind(id)
+        .bind(user)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Recompute `category` for every transaction from its merchant + direction.
 /// Returns the number updated. Used to backfill after category rules change.
 pub async fn recategorize_all(pool: &PgPool, user: Uuid) -> Result<u64> {
